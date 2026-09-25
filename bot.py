@@ -4,12 +4,13 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. BOT CREDENTIALS & SETUP
+# 1. CREDENTIALS & SETUP
 # ==========================================
 BOT_TOKEN = "8600027374:AAEWjWAV5xghoaC-elK0zSyTILLvVjvst0k" 
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
+DB_CHANNEL_ID = -1004448866853 # Aapka naya Database Channel
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
@@ -18,7 +19,7 @@ movies_col = db["Movies"]
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 # ==========================================
-# 2. START COMMAND (Spam Blocker Added)
+# 2. START COMMAND
 # ==========================================
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
@@ -29,43 +30,47 @@ async def start_command(client, message):
         f"🔎 Kᴏɪ ʙʜɪ ᴍᴏᴠɪᴇ ʏᴀ ᴡᴇʙ sᴇʀɪᴇs ᴅᴏᴡɴʟᴏᴀᴅ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ ʙᴀs ᴜsᴋᴀ ɴᴀᴀᴍ ʟɪᴋʜ ᴋᴀʀ ʙʜᴇᴊᴇɪɴ."
     )
     await message.reply_text(welcome_text)
-    raise StopPropagation # Spam rokne ke liye
+    raise StopPropagation
 
 # ==========================================
-# 3. AUTO-SAVE & SMART TAG SCANNER
+# 3. AUTO-SAVE (Direct to Channel)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private)
 async def save_movie_to_db(client, message):
-    if not message.caption:
-        await message.reply_text("❌ Kripya caption mein chhota search keyword likhein (eg: spiderman)")
-        return
-        
-    search_keyword = message.caption.lower().strip()
+    # 1. File ko channel mein copy karna
+    try:
+        copied_msg = await message.copy(DB_CHANNEL_ID)
+    except Exception:
+        await message.reply_text("❌ Error: Bot ko channel mein admin nahi banaya gaya hai ya ID galat hai.")
+        raise StopPropagation
+
+    # 2. File ka naam aur details nikalna (Bina Caption ke!)
     media = message.document or message.video
-    exact_file_name = getattr(media, "file_name", f"{search_keyword}_file.mp4")
+    exact_file_name = getattr(media, "file_name", "movie_file.mp4")
+    search_keyword = exact_file_name.lower() # Ab pura file name hi keyword hai
     
-    # Auto-detect Quality and Language from File Name
-    name_lower = exact_file_name.lower()
+    # Auto-detect Quality and Language
     quality_tags = []
-    if "480p" in name_lower: quality_tags.append("480p")
-    if "720p" in name_lower: quality_tags.append("720p")
-    if "1080p" in name_lower: quality_tags.append("1080p")
-    if "4k" in name_lower or "2160p" in name_lower: quality_tags.append("4k")
+    if "480p" in search_keyword: quality_tags.append("480p")
+    if "720p" in search_keyword: quality_tags.append("720p")
+    if "1080p" in search_keyword: quality_tags.append("1080p")
+    if "4k" in search_keyword or "2160p" in search_keyword: quality_tags.append("4k")
     
     lang_tags = []
-    if "hindi" in name_lower or "hin" in name_lower: lang_tags.append("hindi")
-    if "english" in name_lower or "eng" in name_lower: lang_tags.append("english")
-    if "dual" in name_lower: lang_tags.append("dual audio")
+    if "hindi" in search_keyword or "hin" in search_keyword: lang_tags.append("hindi")
+    if "english" in search_keyword or "eng" in search_keyword: lang_tags.append("english")
+    if "dual" in search_keyword: lang_tags.append("dual audio")
     
+    # 3. MongoDB mein save karna (Message ID ke sath)
     movies_col.insert_one({
-        "movie_name": search_keyword,
+        "movie_name": search_keyword, 
         "file_name": exact_file_name,
-        "file_id": media.file_id,
+        "message_id": copied_msg.id, # Sabse important line (Channel se file uthane ke liye)
         "quality": quality_tags,
         "language": lang_tags
     })
     
-    await message.reply_text(f"✅ **Movie Saved & Scanned!**\n🔎 `{search_keyword}`\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Movie DataBase Channel mein Save ho gayi!**\n📁 `{exact_file_name}`")
     raise StopPropagation
 
 # ==========================================
@@ -91,28 +96,24 @@ async def search_movie(client, message):
     ])
     
     if len(movies) > 1:
-        buttons.append([
-            InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ Fɪʟᴇs 📥", callback_data=f"sendall_{search_query}")
-        ])
+        buttons.append([InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ Fɪʟᴇs 📥", callback_data=f"sendall_{search_query}")])
     
     for movie in movies:
         movie_id = str(movie["_id"])
         exact_file_name = movie.get("file_name", "Movie File")
-        buttons.append([
-            InlineKeyboardButton(f"📁 {exact_file_name}", callback_data=f"get_{movie_id}")
-        ])
+        buttons.append([InlineKeyboardButton(f"📁 {exact_file_name}", callback_data=f"get_{movie_id}")])
         
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     raise StopPropagation
 
 # ==========================================
-# 5. BUTTON CLICKS & LIVE FILTER LOGIC
+# 5. BUTTON CLICKS & FILE DELIVERY (From Channel)
 # ==========================================
 @app.on_callback_query()
 async def button_click(client, query):
     data = query.data
     
-    # FILTER MENUS (Pixel & Language)
+    # --- FILTERS ---
     if data.startswith("filter_pixel_"):
         search_query = data.split("_", 2)[2]
         btns = [
@@ -137,7 +138,7 @@ async def button_click(client, query):
     elif data == "dummy_season":
         await query.answer("Season filter abhi process mein hai! 🚀", show_alert=True)
         
-    # APPLY FILTERS
+    # --- APPLY FILTERS ---
     elif data.startswith("apply_"):
         parts = data.split("_", 3)
         filter_type = parts[1] 
@@ -161,7 +162,7 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
         
-    # BACK BUTTON
+    # --- BACK BUTTON ---
     elif data.startswith("back_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
@@ -181,32 +182,34 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
 
-    # SEND SINGLE FILE
+    # --- SEND SINGLE FILE (Pulls from Channel) ---
     elif data.startswith("get_"):
         movie_id = data.split("_")[1]
         movie = movies_col.find_one({"_id": ObjectId(movie_id)})
-        if movie:
+        
+        if movie and "message_id" in movie:
             await query.answer("Sending File... 📤", show_alert=False)
             await client.send_chat_action(query.message.chat.id, enums.ChatAction.UPLOAD_DOCUMENT)
-            exact_file_name = movie.get("file_name", "Movie File")
             try:
-                await client.send_document(chat_id=query.message.chat.id, document=movie["file_id"], caption=f"🍿 **Enjoy your movie!**\n📁 `{exact_file_name}`")
-            except Exception:
-                await query.message.reply_text("❌ Error: File Telegram server se delete ho chuki hai.")
+                # Direct Channel se Copy karega
+                await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+            except Exception as e:
+                await query.message.reply_text("❌ Error: Channel se file fetch nahi ho payi.")
         else:
-            await query.answer("File missing in Database!", show_alert=True)
+            await query.answer("Yeh purani file hai, isey wapas upload karein!", show_alert=True)
             
-    # SEND ALL FILES
+    # --- SEND ALL FILES ---
     elif data.startswith("sendall_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
         await query.answer(f"Sending {len(movies)} files... 📤", show_alert=False)
         for movie in movies:
-            try:
-                await client.send_document(chat_id=query.message.chat.id, document=movie["file_id"], caption=f"📁 `{movie.get('file_name', '')}`")
-            except:
-                continue
+            if "message_id" in movie:
+                try:
+                    await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+                except:
+                    continue
 
 if __name__ == "__main__":
-    print("🚀 Pro Bot is Alive (With Live Filters & Spam Blocker)...")
+    print("🚀 Pro Bot is Alive (With Database Channel Integration)...")
     app.run()
