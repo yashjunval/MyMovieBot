@@ -6,7 +6,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. CREDENTIALS & SETUP
 # ==========================================
-BOT_TOKEN = "8600027374:AAEWzfr14P-_h7OEOgCbh1yyQ940Y7W_xyQ" 
+BOT_TOKEN = "8600027374:AAEkL-eFc9PlJrj17_PdAz1LJPOT44YCZNI" 
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
