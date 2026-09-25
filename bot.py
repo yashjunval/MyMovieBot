@@ -1,94 +1,5 @@
-from pyrogram import Client, filters, enums, StopPropagation
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pymongo import MongoClient
-from bson.objectid import ObjectId
-
-# ==========================================
-# 1. CREDENTIALS & SETUP (Fresh Token Added)
-# ==========================================
-BOT_TOKEN = "8600027374:AAFNGEkHzPKnCpRC-VRivArvRG3HtFrfiXc" 
-ADMIN_ID = 6855375693 # 🔒 Yash bhai ki Admin ID
-API_ID = 33056032
-API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
-MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
-DB_CHANNEL_ID = -1004448866853 
-
-mongo_client = MongoClient(MONGO_URL)
-db = mongo_client["MovieBot"]
-movies_col = db["Movies"]
-
-app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
-
-# ==========================================
-# 2. START COMMAND
-# ==========================================
-@app.on_message(filters.command("start") & filters.private)
-async def start_command(client, message):
-    user_name = message.from_user.first_name if message.from_user else "User"
-    welcome_text = (
-        f"👋 **Hᴇʏ, {user_name}** ❞\n\n"
-        f"🎬 **Mᴀɪɴ Eᴋ Aᴅᴠᴀɴᴄᴇ Mᴏᴠɪᴇ Bᴏᴛ Hᴏᴏɴ!**\n\n"
-        f"🔎 Kᴏɪ ʙʜɪ ᴍᴏᴠɪᴇ ʏᴀ ᴡᴇʙ sᴇʀɪᴇs ᴅᴏᴡɴʟᴏᴀᴅ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ ʙᴀs ᴜsᴋᴀ ɴᴀᴀᴍ ʟɪᴋʜ ᴋᴀʀ ʙʜᴇᴊᴇɪɴ."
-    )
-    await message.reply_text(welcome_text)
-    raise StopPropagation
-
-# ==========================================
-# 3. AUTO-SAVE (Sirf Admin Ke Liye Lock 🔒)
-# ==========================================
-@app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
-async def save_movie_to_db(client, message):
-    try:
-        copied_msg = await message.copy(DB_CHANNEL_ID)
-    except Exception:
-        await message.reply_text("❌ Error: Bot ko channel mein admin banayein.")
-        raise StopPropagation
-
-    media = message.document or message.video
-    exact_file_name = getattr(media, "file_name", "movie_file.mp4")
-    search_keyword = exact_file_name.lower()
-    
-    quality_tags = []
-    if "480p" in search_keyword: quality_tags.append("480p")
-    if "720p" in search_keyword: quality_tags.append("720p")
-    if "1080p" in search_keyword: quality_tags.append("1080p")
-    if "4k" in search_keyword or "2160p" in search_keyword: quality_tags.append("4k")
-    
-    lang_tags = []
-    if "hindi" in search_keyword or "hin" in search_keyword: lang_tags.append("hindi")
-    if "english" in search_keyword or "eng" in search_keyword: lang_tags.append("english")
-    if "dual" in search_keyword: lang_tags.append("dual audio")
-    
-    movies_col.insert_one({
-        "movie_name": search_keyword, 
-        "file_name": exact_file_name,
-        "message_id": copied_msg.id,
-        "quality": quality_tags,
-        "language": lang_tags
-    })
-    
-    await message.reply_text(f"✅ **Movie DataBase Channel mein Save ho gayi!**\n📁 `{exact_file_name}`")
-    raise StopPropagation
-
-# ==========================================
-# 4. USER SEARCH (Spam Loop Killer System)
-# ==========================================
-@app.on_message(filters.text & filters.private & ~filters.command("start"))
-async def search_movie(client, message):
-    if message.from_user and message.from_user.is_bot:
-        return
-        
-    search_query = message.text.lower().strip()
-    
-    if "sorry" in search_query:
-        return
-
-    movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
-    
-    if not movies:
-        await message.reply_text("❌ **Sorry, yeh movie abhi available nahi hai. Spelling check karein.**")
-        raise StopPropagation
 import re
+import asyncio
 from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
@@ -176,13 +87,14 @@ async def search_movie(client, message):
     if message.from_user and message.from_user.is_bot:
         return
         
-    # Search query is limited to 35 chars to prevent 64-byte Telegram button crash
     search_query = message.text.lower().strip()[:35] 
     
     if "sorry" in search_query:
         return
 
-    movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
+    # re.escape and .limit(50) added for maximum safety
+    safe_query = re.escape(search_query)
+    movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
     
     if not movies:
         await message.reply_text("❌ **Sorry, yeh movie abhi available nahi hai. Spelling check karein.**")
@@ -208,6 +120,16 @@ async def search_movie(client, message):
         
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     raise StopPropagation
+
+# ==========================================
+# AUTO-DELETE BACKGROUND TASK
+# ==========================================
+async def auto_delete_task(client, chat_id, message_ids):
+    await asyncio.sleep(600) # 600 seconds = 10 minutes
+    try:
+        await client.delete_messages(chat_id, message_ids)
+    except Exception:
+        pass
 
 # ==========================================
 # 5. BUTTON CLICKS & FILE DELIVERY
@@ -239,7 +161,8 @@ async def button_click(client, query):
         
     elif data.startswith("filter_season_"):
         search_query = data.split("_", 2)[2]
-        movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
+        safe_query = re.escape(search_query)
+        movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
         
         seasons = set()
         for m in movies:
@@ -270,13 +193,14 @@ async def button_click(client, query):
         filter_type = parts[1] 
         filter_value = parts[2]
         search_query = parts[3]
+        safe_query = re.escape(search_query)
         
         if filter_type == "pixel":
-            movies = list(movies_col.find({"movie_name": {"$regex": search_query}, "quality": filter_value}))
+            movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "quality": filter_value}).limit(50))
         elif filter_type == "lang":
-            movies = list(movies_col.find({"movie_name": {"$regex": search_query}, "language": filter_value}))
+            movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "language": filter_value}).limit(50))
         elif filter_type == "season":
-            movies = list(movies_col.find({"movie_name": {"$regex": search_query}, "season": filter_value}))
+            movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "season": filter_value}).limit(50))
             
         if not movies:
             await query.answer(f"❌ Is movie ki '{filter_value}' file abhi upload nahi hui hai!", show_alert=True)
@@ -292,7 +216,8 @@ async def button_click(client, query):
         
     elif data.startswith("back_"):
         search_query = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
+        safe_query = re.escape(search_query)
+        movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
         
         buttons = []
         buttons.append([
@@ -317,7 +242,11 @@ async def button_click(client, query):
             await query.answer("Sending File... 📤", show_alert=False)
             await client.send_chat_action(query.message.chat.id, enums.ChatAction.UPLOAD_DOCUMENT)
             try:
-                await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+                msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+                warning_msg = await query.message.reply_text("⚠️ **Note:** Yeh file copyright ki wajah se **10 minute** mein auto-delete ho jayegi. Kripya jaldi download/forward kar lein!")
+                
+                # Start background timer for deletion
+                asyncio.create_task(auto_delete_task(client, query.message.chat.id, [msg.id, warning_msg.id]))
             except Exception as e:
                 await query.message.reply_text("❌ Error: Channel se file fetch nahi ho payi.")
         else:
@@ -325,15 +254,25 @@ async def button_click(client, query):
             
     elif data.startswith("sendall_"):
         search_query = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
+        safe_query = re.escape(search_query)
+        movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
         await query.answer(f"Sending {len(movies)} files... 📤", show_alert=False)
+        
+        sent_msg_ids = []
         for movie in movies:
             if "message_id" in movie:
                 try:
-                    await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+                    msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
+                    sent_msg_ids.append(msg.id)
+                    await asyncio.sleep(0.5) # FloodWait Anti-Spam Protection
                 except:
                     continue
+                    
+        if sent_msg_ids:
+            warning_msg = await query.message.reply_text("⚠️ **Note:** Yeh sabhi files **10 minute** mein auto-delete ho jayengi!")
+            sent_msg_ids.append(warning_msg.id)
+            asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_msg_ids))
 
 if __name__ == "__main__":
-    print("🚀 Ultimate Pro Bot is Alive (Bug Free & Secure)...")
+    print("🚀 Ultimate Pro Bot is Alive (100% Bulletproof & Auto-Delete Enabled)...")
     app.run()
