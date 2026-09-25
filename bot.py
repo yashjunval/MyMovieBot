@@ -1,16 +1,18 @@
-from pyrogram import Client, filters, enums, StopPropagation
+from pyrogram import Client, filters, enums
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.exceptions import StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. CREDENTIALS & SETUP
+# 1. CREDENTIALS & SETUP (Sab set hai)
 # ==========================================
-BOT_TOKEN = "8600027374:AAEWjWAV5xghoaC-elK0zSyTILLvVjvst0k" 
+BOT_TOKEN = "8600027374:AAEWzfr14P-_h7OEOgCbh1yyQ940Y7W_xyQ" 
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
-DB_CHANNEL_ID = -1004448866853 # Aapka naya Database Channel
+DB_CHANNEL_ID = -1004448866853 # Aapka Movie bot personal channel
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
@@ -33,7 +35,7 @@ async def start_command(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. AUTO-SAVE (Direct to Channel)
+# 3. AUTO-SAVE (Bina Caption, Direct to Channel)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private)
 async def save_movie_to_db(client, message):
@@ -41,13 +43,13 @@ async def save_movie_to_db(client, message):
     try:
         copied_msg = await message.copy(DB_CHANNEL_ID)
     except Exception:
-        await message.reply_text("❌ Error: Bot ko channel mein admin nahi banaya gaya hai ya ID galat hai.")
+        await message.reply_text("❌ Error: Bot ko channel mein admin banayein.")
         raise StopPropagation
 
-    # 2. File ka naam aur details nikalna (Bina Caption ke!)
+    # 2. File ka naam aur details nikalna
     media = message.document or message.video
     exact_file_name = getattr(media, "file_name", "movie_file.mp4")
-    search_keyword = exact_file_name.lower() # Ab pura file name hi keyword hai
+    search_keyword = exact_file_name.lower()
     
     # Auto-detect Quality and Language
     quality_tags = []
@@ -65,7 +67,7 @@ async def save_movie_to_db(client, message):
     movies_col.insert_one({
         "movie_name": search_keyword, 
         "file_name": exact_file_name,
-        "message_id": copied_msg.id, # Sabse important line (Channel se file uthane ke liye)
+        "message_id": copied_msg.id,
         "quality": quality_tags,
         "language": lang_tags
     })
@@ -79,6 +81,8 @@ async def save_movie_to_db(client, message):
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def search_movie(client, message):
     search_query = message.text.lower().strip()
+    
+    # Simple keyword matching so users can just type "animal"
     movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
     
     if not movies:
@@ -113,7 +117,6 @@ async def search_movie(client, message):
 async def button_click(client, query):
     data = query.data
     
-    # --- FILTERS ---
     if data.startswith("filter_pixel_"):
         search_query = data.split("_", 2)[2]
         btns = [
@@ -138,7 +141,6 @@ async def button_click(client, query):
     elif data == "dummy_season":
         await query.answer("Season filter abhi process mein hai! 🚀", show_alert=True)
         
-    # --- APPLY FILTERS ---
     elif data.startswith("apply_"):
         parts = data.split("_", 3)
         filter_type = parts[1] 
@@ -162,7 +164,6 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
         
-    # --- BACK BUTTON ---
     elif data.startswith("back_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
@@ -182,7 +183,6 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
 
-    # --- SEND SINGLE FILE (Pulls from Channel) ---
     elif data.startswith("get_"):
         movie_id = data.split("_")[1]
         movie = movies_col.find_one({"_id": ObjectId(movie_id)})
@@ -191,14 +191,12 @@ async def button_click(client, query):
             await query.answer("Sending File... 📤", show_alert=False)
             await client.send_chat_action(query.message.chat.id, enums.ChatAction.UPLOAD_DOCUMENT)
             try:
-                # Direct Channel se Copy karega
                 await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
             except Exception as e:
                 await query.message.reply_text("❌ Error: Channel se file fetch nahi ho payi.")
         else:
             await query.answer("Yeh purani file hai, isey wapas upload karein!", show_alert=True)
             
-    # --- SEND ALL FILES ---
     elif data.startswith("sendall_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
@@ -211,5 +209,5 @@ async def button_click(client, query):
                     continue
 
 if __name__ == "__main__":
-    print("🚀 Pro Bot is Alive (With Database Channel Integration)...")
+    print("🚀 Pro Bot is Alive (Anti-Spam + Channel DB Live)...")
     app.run()
