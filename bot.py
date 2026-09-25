@@ -1,4 +1,5 @@
-from pyrogram import Client, filters, enums, StopPropagation
+from pyrogram import Client, filters, enums
+from pyrogram.exceptions import StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -7,10 +8,11 @@ from bson.objectid import ObjectId
 # 1. CREDENTIALS & SETUP
 # ==========================================
 BOT_TOKEN = "8600027374:AAGmMjISNfFqpSofW9piZtHuoLB0ij5E3qI" 
+ADMIN_ID = 6855375693 # 🔒 Yash bhai ki Admin ID Set Ho Gayi Hai
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
-DB_CHANNEL_ID = -1004448866853 # Aapka Movie bot personal channel
+DB_CHANNEL_ID = -1004448866853 
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
@@ -33,9 +35,9 @@ async def start_command(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. AUTO-SAVE (Direct to Channel)
+# 3. AUTO-SAVE (Sirf Admin Ke Liye Lock 🔒)
 # ==========================================
-@app.on_message((filters.document | filters.video) & filters.private)
+@app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
     try:
         copied_msg = await message.copy(DB_CHANNEL_ID)
@@ -208,5 +210,5 @@ async def button_click(client, query):
                     continue
 
 if __name__ == "__main__":
-    print("🚀 Ultimate Pro Bot is Alive (Anti-Spam Loop Killer + Channel DB Live)...")
+    print("🚀 Ultimate Pro Bot is Alive (Admin Locked + Anti-Spam)...")
     app.run()
