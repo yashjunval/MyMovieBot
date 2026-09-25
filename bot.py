@@ -4,10 +4,10 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. CREDENTIALS & SETUP (100% Fixed & Secure)
+# 1. CREDENTIALS & SETUP (Fresh Token Added)
 # ==========================================
-BOT_TOKEN = "8600027374:AAGmMjISNfFqpSofW9piZtHuoLB0ij5E3qI" 
-ADMIN_ID = 6855375693 # 🔒 Yash bhai ki Admin ID Set Ho Gayi Hai
+BOT_TOKEN = "8600027374:AAFNGEkHzPKnCpRC-VRivArvRG3HtFrfiXc" 
+ADMIN_ID = 6855375693 # 🔒 Yash bhai ki Admin ID
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
@@ -209,5 +209,5 @@ async def button_click(client, query):
                     continue
 
 if __name__ == "__main__":
-    print("🚀 Ultimate Pro Bot is Alive (Errors Fixed + Admin Locked)...")
+    print("🚀 Ultimate Pro Bot is Alive (Fresh Token + Admin Locked)...")
     app.run()
