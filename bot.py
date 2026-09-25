@@ -1,4 +1,4 @@
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -6,7 +6,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. BOT CREDENTIALS & SETUP
 # ==========================================
-BOT_TOKEN = "8600027374:AAExd9ADCmiZXDBn7pWkYIWTpt24XIMt1UU" 
+BOT_TOKEN = "8600027374:AAEWjWAV5xghoaC-elK0zSyTILLvVjvst0k" 
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
@@ -15,11 +15,10 @@ mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
 movies_col = db["Movies"]
 
-# Drop old pending updates to kill the spam loop forever
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 # ==========================================
-# 2. START COMMAND
+# 2. START COMMAND (Spam Blocker Added)
 # ==========================================
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
@@ -30,9 +29,10 @@ async def start_command(client, message):
         f"🔎 Kᴏɪ ʙʜɪ ᴍᴏᴠɪᴇ ʏᴀ ᴡᴇʙ sᴇʀɪᴇs ᴅᴏᴡɴʟᴏᴀᴅ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ ʙᴀs ᴜsᴋᴀ ɴᴀᴀᴍ ʟɪᴋʜ ᴋᴀʀ ʙʜᴇᴊᴇɪɴ."
     )
     await message.reply_text(welcome_text)
+    raise StopPropagation # Spam rokne ke liye
 
 # ==========================================
-# 3. AUTO-SAVE SYSTEM (Smart Scanner)
+# 3. AUTO-SAVE & SMART TAG SCANNER
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private)
 async def save_movie_to_db(client, message):
@@ -44,7 +44,7 @@ async def save_movie_to_db(client, message):
     media = message.document or message.video
     exact_file_name = getattr(media, "file_name", f"{search_keyword}_file.mp4")
     
-    # Smart Tagging System (Auto-detect from file name)
+    # Auto-detect Quality and Language from File Name
     name_lower = exact_file_name.lower()
     quality_tags = []
     if "480p" in name_lower: quality_tags.append("480p")
@@ -66,6 +66,7 @@ async def save_movie_to_db(client, message):
     })
     
     await message.reply_text(f"✅ **Movie Saved & Scanned!**\n🔎 `{search_keyword}`\n📁 `{exact_file_name}`")
+    raise StopPropagation
 
 # ==========================================
 # 4. USER SEARCH & DYNAMIC FILTER UI
@@ -76,16 +77,13 @@ async def search_movie(client, message):
     movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
     
     if not movies:
-        # If no movie found, just reply ONCE and exit (no loop)
         await message.reply_text("❌ **Sorry, yeh movie abhi available nahi hai. Spelling check karein.**")
-        return
+        raise StopPropagation
         
     user_name = message.from_user.first_name
     text = f"👋 **Hᴇʏ, {user_name}** ❞\n\n📁 **Hᴇʀᴇ I Fᴏᴜɴᴅ Fᴏʀ Yᴏᴜʀ Sᴇᴀʀᴄʜ -** `{message.text}`."
     
     buttons = []
-    
-    # Active Filter Buttons
     buttons.append([
         InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_pixel_{search_query}"),
         InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{search_query}"),
@@ -105,15 +103,16 @@ async def search_movie(client, message):
         ])
         
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    raise StopPropagation
 
 # ==========================================
-# 5. BUTTON CLICKS & FILTER LOGIC
+# 5. BUTTON CLICKS & LIVE FILTER LOGIC
 # ==========================================
 @app.on_callback_query()
 async def button_click(client, query):
     data = query.data
     
-    # --- FILTER MENUS ---
+    # FILTER MENUS (Pixel & Language)
     if data.startswith("filter_pixel_"):
         search_query = data.split("_", 2)[2]
         btns = [
@@ -136,23 +135,22 @@ async def button_click(client, query):
         await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         
     elif data == "dummy_season":
-        await query.answer("Season filter is coming soon! 🚀", show_alert=True)
+        await query.answer("Season filter abhi process mein hai! 🚀", show_alert=True)
         
-    # --- APPLY FILTERS & SHOW RESULTS ---
+    # APPLY FILTERS
     elif data.startswith("apply_"):
         parts = data.split("_", 3)
-        filter_type = parts[1] # pixel or lang
+        filter_type = parts[1] 
         filter_value = parts[2]
         search_query = parts[3]
         
-        # Database query based on filter
         if filter_type == "pixel":
             movies = list(movies_col.find({"movie_name": {"$regex": search_query}, "quality": filter_value}))
         else:
             movies = list(movies_col.find({"movie_name": {"$regex": search_query}, "language": filter_value}))
             
         if not movies:
-            await query.answer(f"❌ Is movie ki {filter_value} file abhi database mein nahi hai!", show_alert=True)
+            await query.answer(f"❌ Is movie ki '{filter_value}' file abhi upload nahi hui hai!", show_alert=True)
             return
             
         buttons = [[InlineKeyboardButton("🔙 Back to All Files", callback_data=f"back_{search_query}")]]
@@ -163,7 +161,7 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
         
-    # --- BACK BUTTON ---
+    # BACK BUTTON
     elif data.startswith("back_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
@@ -183,7 +181,7 @@ async def button_click(client, query):
             
         await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
 
-    # --- FILE DELIVERY ---
+    # SEND SINGLE FILE
     elif data.startswith("get_"):
         movie_id = data.split("_")[1]
         movie = movies_col.find_one({"_id": ObjectId(movie_id)})
@@ -198,6 +196,7 @@ async def button_click(client, query):
         else:
             await query.answer("File missing in Database!", show_alert=True)
             
+    # SEND ALL FILES
     elif data.startswith("sendall_"):
         search_query = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
