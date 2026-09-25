@@ -1,12 +1,10 @@
-from pyrogram import Client, filters, enums
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from pyrogram.exceptions import StopPropagation
+from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. CREDENTIALS & SETUP (Sab set hai)
+# 1. CREDENTIALS & SETUP
 # ==========================================
 BOT_TOKEN = "8600027374:AAEWzfr14P-_h7OEOgCbh1yyQ940Y7W_xyQ" 
 API_ID = 33056032
@@ -35,23 +33,20 @@ async def start_command(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. AUTO-SAVE (Bina Caption, Direct to Channel)
+# 3. AUTO-SAVE (Direct to Channel)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private)
 async def save_movie_to_db(client, message):
-    # 1. File ko channel mein copy karna
     try:
         copied_msg = await message.copy(DB_CHANNEL_ID)
     except Exception:
         await message.reply_text("❌ Error: Bot ko channel mein admin banayein.")
         raise StopPropagation
 
-    # 2. File ka naam aur details nikalna
     media = message.document or message.video
     exact_file_name = getattr(media, "file_name", "movie_file.mp4")
     search_keyword = exact_file_name.lower()
     
-    # Auto-detect Quality and Language
     quality_tags = []
     if "480p" in search_keyword: quality_tags.append("480p")
     if "720p" in search_keyword: quality_tags.append("720p")
@@ -63,7 +58,6 @@ async def save_movie_to_db(client, message):
     if "english" in search_keyword or "eng" in search_keyword: lang_tags.append("english")
     if "dual" in search_keyword: lang_tags.append("dual audio")
     
-    # 3. MongoDB mein save karna (Message ID ke sath)
     movies_col.insert_one({
         "movie_name": search_keyword, 
         "file_name": exact_file_name,
@@ -81,8 +75,6 @@ async def save_movie_to_db(client, message):
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def search_movie(client, message):
     search_query = message.text.lower().strip()
-    
-    # Simple keyword matching so users can just type "animal"
     movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
     
     if not movies:
