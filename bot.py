@@ -1,11 +1,10 @@
-from pyrogram import Client, filters, enums
-from pyrogram.exceptions import StopPropagation
+from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. CREDENTIALS & SETUP (Naya Token Set Hai)
+# 1. CREDENTIALS & SETUP
 # ==========================================
 BOT_TOKEN = "8600027374:AAGmMjISNfFqpSofW9piZtHuoLB0ij5E3qI" 
 API_ID = 33056032
@@ -75,13 +74,11 @@ async def save_movie_to_db(client, message):
 # ==========================================
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def search_movie(client, message):
-    # BLOCK 1: Agar message kisi dusre bot ne ya khud bot ne bheja hai, toh use ignore karo
     if message.from_user and message.from_user.is_bot:
         return
         
     search_query = message.text.lower().strip()
     
-    # BLOCK 2: Agar search me galti se "sorry" likha aaya (loop wala word), toh use ignore karo
     if "sorry" in search_query:
         return
 
