@@ -1,12 +1,13 @@
-from pyrogram import Client, filters, enums, StopPropagation
+from pyrogram import Client, filters, enums
+from pyrogram.exceptions import StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. CREDENTIALS & SETUP
+# 1. CREDENTIALS & SETUP (Naya Token Set Hai)
 # ==========================================
-BOT_TOKEN = "8600027374:AAHmFK8cKAmwFeyNFnCjIhfd1gHAIo3_poE" 
+BOT_TOKEN = "8600027374:AAGmMjISNfFqpSofW9piZtHuoLB0ij5E3qI" 
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
@@ -23,7 +24,7 @@ app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKE
 # ==========================================
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
-    user_name = message.from_user.first_name
+    user_name = message.from_user.first_name if message.from_user else "User"
     welcome_text = (
         f"👋 **Hᴇʏ, {user_name}** ❞\n\n"
         f"🎬 **Mᴀɪɴ Eᴋ Aᴅᴠᴀɴᴄᴇ Mᴏᴠɪᴇ Bᴏᴛ Hᴏᴏɴ!**\n\n"
@@ -70,18 +71,27 @@ async def save_movie_to_db(client, message):
     raise StopPropagation
 
 # ==========================================
-# 4. USER SEARCH & DYNAMIC FILTER UI
+# 4. USER SEARCH (Spam Loop Killer System)
 # ==========================================
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def search_movie(client, message):
+    # BLOCK 1: Agar message kisi dusre bot ne ya khud bot ne bheja hai, toh use ignore karo
+    if message.from_user and message.from_user.is_bot:
+        return
+        
     search_query = message.text.lower().strip()
+    
+    # BLOCK 2: Agar search me galti se "sorry" likha aaya (loop wala word), toh use ignore karo
+    if "sorry" in search_query:
+        return
+
     movies = list(movies_col.find({"movie_name": {"$regex": search_query}}))
     
     if not movies:
         await message.reply_text("❌ **Sorry, yeh movie abhi available nahi hai. Spelling check karein.**")
         raise StopPropagation
         
-    user_name = message.from_user.first_name
+    user_name = message.from_user.first_name if message.from_user else "User"
     text = f"👋 **Hᴇʏ, {user_name}** ❞\n\n📁 **Hᴇʀᴇ I Fᴏᴜɴᴅ Fᴏʀ Yᴏᴜʀ Sᴇᴀʀᴄʜ -** `{message.text}`."
     
     buttons = []
@@ -201,5 +211,5 @@ async def button_click(client, query):
                     continue
 
 if __name__ == "__main__":
-    print("🚀 Pro Bot is Alive (Anti-Spam + Channel DB Live)...")
+    print("🚀 Ultimate Pro Bot is Alive (Anti-Spam Loop Killer + Channel DB Live)...")
     app.run()
