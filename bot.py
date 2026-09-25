@@ -5,7 +5,7 @@ from bson.objectid import ObjectId  # Database se ID nikalne ke liye
 import asyncio # Auto-delete timer ke liye
 
 # --- 1. CREDENTIALS ---
-BOT_TOKEN = "8600027374:AAFU9RWFfRFxrNHm6W9FZ_V9LI2WQSlMCKU" 
+BOT_TOKEN = "8600027374:AAHsVg2IZgVmfSuYCcNlH1B3leAkvyRkl1s" 
 API_ID = 33056032 
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
