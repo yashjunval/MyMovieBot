@@ -8,6 +8,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. CREDENTIALS & SETUP
 # ==========================================
+# Abhi purana token hi laga diya hai. Kal naya aate hi isey badal lena!
 BOT_TOKEN = "8600027374:AAFNGEkHzPKnCpRC-VRivArvRG3HtFrfiXc" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
@@ -36,7 +37,7 @@ async def start_command(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. AUTO-SAVE (Admin Lock + Smart Season AI)
+# 3. AUTO-SAVE (Admin Lock + Season & Episode AI)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
@@ -50,22 +51,35 @@ async def save_movie_to_db(client, message):
     exact_file_name = getattr(media, "file_name", "movie_file.mp4")
     search_keyword = exact_file_name.lower()
     
+    # 1. Quality Tags
     quality_tags = []
     if "480p" in search_keyword: quality_tags.append("480p")
     if "720p" in search_keyword: quality_tags.append("720p")
     if "1080p" in search_keyword: quality_tags.append("1080p")
     if "4k" in search_keyword or "2160p" in search_keyword: quality_tags.append("4k")
     
+    # 2. Language Tags
     lang_tags = []
     if "hindi" in search_keyword or "hin" in search_keyword: lang_tags.append("hindi")
     if "english" in search_keyword or "eng" in search_keyword: lang_tags.append("english")
     if "dual" in search_keyword: lang_tags.append("dual audio")
         
+    # 3. Season Tags (S01, Season 1)
     season_tags = []
     season_matches = re.findall(r'\bs(\d+)|\bseason\s*(\d+)', search_keyword)
     for match in season_matches:
         num = match[0] or match[1]
         season_tags.append(f"S{num.zfill(2)}") 
+        
+    # 4. Episode Tags (E01, E01-03, Ep 5)
+    episode_tags = []
+    ep_matches = re.findall(r'\[?[eE]p?(?:isode)?\s*(\d+(?:\s*-\s*\d+)?)\]?', search_keyword)
+    for ep in ep_matches:
+        ep_clean = ep.replace(" ", "")
+        if '-' in ep_clean:
+            episode_tags.append(f"E{ep_clean}") # Like E01-03
+        else:
+            episode_tags.append(f"E{ep_clean.zfill(2)}") # Like E01
     
     movies_col.insert_one({
         "movie_name": search_keyword, 
@@ -73,7 +87,8 @@ async def save_movie_to_db(client, message):
         "message_id": copied_msg.id,
         "quality": quality_tags,
         "language": lang_tags,
-        "season": list(set(season_tags))
+        "season": list(set(season_tags)),
+        "episode": list(set(episode_tags))
     })
     
     await message.reply_text(f"✅ **Movie DataBase Channel mein Save ho gayi!**\n📁 `{exact_file_name}`")
@@ -92,7 +107,6 @@ async def search_movie(client, message):
     if "sorry" in search_query:
         return
 
-    # re.escape and .limit(50) added for maximum safety
     safe_query = re.escape(search_query)
     movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
     
@@ -106,8 +120,11 @@ async def search_movie(client, message):
     buttons = []
     buttons.append([
         InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_pixel_{search_query}"),
-        InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{search_query}"),
-        InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{search_query}")
+        InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{search_query}")
+    ])
+    buttons.append([
+        InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{search_query}"),
+        InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{search_query}")
     ])
     
     if len(movies) > 1:
@@ -188,6 +205,35 @@ async def button_click(client, query):
         btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{search_query}")])
         await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         
+    elif data.startswith("filter_episode_"):
+        search_query = data.split("_", 2)[2]
+        safe_query = re.escape(search_query)
+        movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
+        
+        episodes = set()
+        for m in movies:
+            if "episode" in m and m["episode"]:
+                episodes.update(m["episode"])
+                
+        episodes = sorted(list(episodes))
+        
+        if not episodes:
+            await query.answer("❌ Is movie/series ka koi Episode filter available nahi hai!", show_alert=True)
+            return
+            
+        btns = []
+        row = []
+        for e in episodes:
+            row.append(InlineKeyboardButton(e, callback_data=f"apply_episode_{e}_{search_query}"))
+            if len(row) == 2: 
+                btns.append(row)
+                row = []
+        if row:
+            btns.append(row)
+            
+        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{search_query}")])
+        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        
     elif data.startswith("apply_"):
         parts = data.split("_", 3)
         filter_type = parts[1] 
@@ -201,6 +247,8 @@ async def button_click(client, query):
             movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "language": filter_value}).limit(50))
         elif filter_type == "season":
             movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "season": filter_value}).limit(50))
+        elif filter_type == "episode":
+            movies = list(movies_col.find({"movie_name": {"$regex": safe_query}, "episode": filter_value}).limit(50))
             
         if not movies:
             await query.answer(f"❌ Is movie ki '{filter_value}' file abhi upload nahi hui hai!", show_alert=True)
@@ -222,8 +270,11 @@ async def button_click(client, query):
         buttons = []
         buttons.append([
             InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_pixel_{search_query}"),
-            InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{search_query}"),
-            InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{search_query}")
+            InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{search_query}")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{search_query}"),
+            InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{search_query}")
         ])
         if len(movies) > 1:
             buttons.append([InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ Fɪʟᴇs 📥", callback_data=f"sendall_{search_query}")])
@@ -245,7 +296,6 @@ async def button_click(client, query):
                 msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
                 warning_msg = await query.message.reply_text("⚠️ **Note:** Yeh file copyright ki wajah se **10 minute** mein auto-delete ho jayegi. Kripya jaldi download/forward kar lein!")
                 
-                # Start background timer for deletion
                 asyncio.create_task(auto_delete_task(client, query.message.chat.id, [msg.id, warning_msg.id]))
             except Exception as e:
                 await query.message.reply_text("❌ Error: Channel se file fetch nahi ho payi.")
@@ -264,7 +314,7 @@ async def button_click(client, query):
                 try:
                     msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
                     sent_msg_ids.append(msg.id)
-                    await asyncio.sleep(0.5) # FloodWait Anti-Spam Protection
+                    await asyncio.sleep(0.5) 
                 except:
                     continue
                     
@@ -274,5 +324,5 @@ async def button_click(client, query):
             asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_msg_ids))
 
 if __name__ == "__main__":
-    print("🚀 Ultimate Pro Bot is Alive (100% Bulletproof & Auto-Delete Enabled)...")
+    print("🚀 Ultimate Pro Bot is Alive (Old Token Active, Episode & Auto Delete Enabled)...")
     app.run()
