@@ -175,7 +175,7 @@ async def request_movie(client, message):
     raise StopPropagation
 
 # ==========================================
-# 🤖 AI & BASIC COMMANDS
+# 🤖 AI RECOMMENDER (Retry Logic Added)
 # ==========================================
 @app.on_message(filters.command("ai") & filters.private)
 async def ai_recommender(client, message):
@@ -189,12 +189,22 @@ async def ai_recommender(client, message):
     await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
     wait_msg = await message.reply_text("🤖 _Thinking..._")
     
-    try:
-        prompt = f"Act as a movie recommender bot. Suggest 3 movies based on this request: '{query}'. Briefly explain why they fit. Keep it short and engaging."
-        response = await ai_model.generate_content_async(prompt)
-        await wait_msg.edit_text(f"🤖 **AI Suggestions:**\n\n{response.text}\n\n_In movies ko download karne ke liye normal search karein!_")
-    except Exception as e:
-        await wait_msg.edit_text(f"❌ AI Server abhi busy hai. Kripya thodi der baad try karein.")
+    # 🔥 Smart Retry Loop for AI
+    response_text = None
+    for attempt in range(3):
+        try:
+            prompt = f"Act as a movie recommender bot. Suggest 3 movies based on this request: '{query}'. Briefly explain why they fit. Keep it short and engaging."
+            response = await ai_model.generate_content_async(prompt)
+            if response and response.text:
+                response_text = response.text
+                break
+        except Exception:
+            await asyncio.sleep(2) # 2 sec wait karke dobara try karega
+            
+    if response_text:
+        await wait_msg.edit_text(f"🤖 **AI Suggestions:**\n\n{response_text}\n\n_In movies ko download karne ke liye normal search karein!_")
+    else:
+        await wait_msg.edit_text("❌ AI Server abhi busy hai. Kripya thodi der baad try karein.")
     raise StopPropagation
 
 @app.on_message(filters.command("watchlist") & filters.private)
@@ -344,7 +354,6 @@ async def search_movie(client, message):
         
     if user_id != ADMIN_ID and not is_vip:
         curr_time = time.time()
-        # Memory Optimization for Spam Tracker
         SPAM_TRACKER[user_id] = [t for t in SPAM_TRACKER.get(user_id, []) if curr_time - t < 5]
         if len(SPAM_TRACKER[user_id]) >= 5:
             banned_col.insert_one({"user_id": user_id})
@@ -369,7 +378,6 @@ async def search_movie(client, message):
     if not movies:
         all_names = movies_col.distinct("movie_name")
         close_matches = difflib.get_close_matches(search_query, all_names, n=3, cutoff=0.5)
-        req_btn = [[InlineKeyboardButton("📩 Request to Admin", callback_data="none_btn")]]
         
         if close_matches:
             sugg = "\n".join([f"👉 `{m.title()}`" for m in close_matches])
@@ -388,7 +396,6 @@ async def search_movie(client, message):
     else:
         text = f"👋 **Hᴇʏ, {message.from_user.first_name}** ❞\n\n📁 **Files Found For -** `{message.text}`."
     
-    # 🔥 FIX: Callback data limit 64 bytes hoti hai, lambe naam par crash rokne ke liye
     cb_sq = search_query[:20] 
     
     buttons = [
@@ -404,7 +411,7 @@ async def search_movie(client, message):
     for movie in movies:
         mid = str(movie["_id"])
         buttons.append([InlineKeyboardButton(f"📁 {movie.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-        buttons.append([InlineKeyboardButton("📌 Add to Watchlist", callback_data=f"wladd_{mid}")])
+        buttons.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
         
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     raise StopPropagation
@@ -422,9 +429,6 @@ async def button_click(client, query):
         await query.answer("Kripya /request command ka use karein.", show_alert=True)
         return
 
-    # ==========================================
-    # 🔥 NOTIFICATION & VERIFY LOGIC
-    # ==========================================
     if data.startswith("reqdone_"):
         if query.from_user.id != ADMIN_ID: return
         target_user = int(data.split("_")[1])
@@ -468,9 +472,6 @@ async def button_click(client, query):
         await query.answer("📌 Watchlist me save ho gayi! Dekhne ke liye /watchlist bhejein.", show_alert=True)
         return
 
-    # ==========================================
-    # ⚙️ FILTERS LOGIC
-    # ==========================================
     if data.startswith("filter_pixel_"):
         sq = data.split("_", 2)[2]
         btns = [
@@ -541,9 +542,6 @@ async def button_click(client, query):
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
         except MessageNotModified: pass
 
-    # ==========================================
-    # 📥 FILE SENDING LOGIC (FloodWait Protected)
-    # ==========================================
     elif data.startswith("get_"):
         mid = data.split("_")[1]
         movie = movies_col.find_one({"_id": ObjectId(mid)})
@@ -571,16 +569,16 @@ async def button_click(client, query):
                 try:
                     msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=m["message_id"])
                     sent_ids.append(msg.id)
-                    await asyncio.sleep(0.5) # 🔥 Protects against FloodWait
+                    await asyncio.sleep(0.5) 
                 except FloodWait as e:
                     await asyncio.sleep(e.value + 1)
                     continue
                 except: continue
         if sent_ids and not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
-            w_msg = await query.message.reply_text("⚠️ **Note:** Yeh sabhi files 10 minute mein auto-delete ho jayengi!")
+            w_msg = await query.message.reply_text("⚠️ **Note:** Yeh sabhi files 10 minute mein auto-delete ho jayegi!")
             sent_ids.append(w_msg.id)
             asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_ids))
 
 if __name__ == "__main__":
-    print("🚀 PRO LEVEL VIP BOT IS ALIVE (Fully Bug-Free Masterpiece)...")
+    print("🚀 PRO LEVEL VIP BOT IS ALIVE (AI Retry Logic Added)...")
     app.run()
