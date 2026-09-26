@@ -1,4 +1,4 @@
-import re
+Import re
 import time
 import asyncio
 import threading
@@ -219,7 +219,7 @@ async def admin_stats(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. 📁 AUTO-SAVE (Clean Name without Underscores)
+# 3. 📁 AUTO-SAVE (Admin Lock)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
@@ -230,12 +230,7 @@ async def save_movie_to_db(client, message):
 
     media = message.document or message.video
     exact_file_name = getattr(media, "file_name", None) or "movie_file.mp4"
-    
-    # 🛠️ CLEAN NAME FIX: Underscores aur dots ko space me convert karna taaki user bina underscore ke search kar sake[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
-    base_name = os.path.splitext(exact_file_name)[0]
-    clean_movie_name = base_name.lower().replace("_", " ").replace(".", " ")
-    clean_movie_name = re.sub(r'\s+', ' ', clean_movie_name).strip()
-    search_keyword = clean_movie_name
+    search_keyword = exact_file_name.lower()
     
     quality_tags, lang_tags, season_tags, episode_tags = [], [], [], []
     if "480p" in search_keyword: quality_tags.append("480p")
@@ -256,7 +251,7 @@ async def save_movie_to_db(client, message):
         "movie_name": search_keyword, "file_name": exact_file_name, "message_id": copied_msg.id,
         "quality": quality_tags, "language": lang_tags, "season": list(set(season_tags)), "episode": list(set(episode_tags))
     })
-    await message.reply_text(f"✅ **Save ho gayi (Clean Name)!**\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Save ho gayi!**\n📁 `{exact_file_name}`")
     raise StopPropagation
 
 # ==========================================
