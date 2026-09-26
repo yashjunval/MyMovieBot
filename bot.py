@@ -3,7 +3,6 @@ import time
 import asyncio
 import aiohttp
 import difflib  
-import threading
 import os
 import google.generativeai as genai 
 from fastapi import FastAPI, Request
@@ -15,10 +14,7 @@ from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton,
-    WebAppInfo,
-    BotCommand, 
-    BotCommandScopeDefault, 
-    BotCommandScopeChat
+    WebAppInfo
 )
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -39,8 +35,8 @@ START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg"
 OMDB_API_KEY = "ec736b29" 
 GEMINI_API_KEY = "AQ.Ab8RN6JREi500rTtVQHd0EHnxEdMZ6CedGiOB-O-XNtOn8tpAw" 
 
-# ✅ Correct Working Render URL
-WEBAPP_URL = "https://movie1820-bot.onrender.com"
+# Active Render URL
+WEBAPP_URL = "https://mymoviebot-1-u4v3.onrender.com"
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
@@ -53,7 +49,6 @@ watchlist_col = db["Watchlist"]
 
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 web_app = FastAPI()
-SPAM_TRACKER = {}
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -179,20 +174,24 @@ async def approve_join_req(client, message):
     try:
         await client.approve_chat_join_request(chat_id=message.chat.id, user_id=message.from_user.id)
         await client.send_message(message.from_user.id, "✅ **Aapki join request accept ho gayi hai!**")
-    except: pass
+    except Exception:
+        pass
 
 async def check_fsub(client, user_id):
-    if not FSUB_CHANNEL_ID or FSUB_CHANNEL_ID == -1000000000000: return True 
+    if not FSUB_CHANNEL_ID or FSUB_CHANNEL_ID == -1000000000000:
+        return True 
     try:
         member = await client.get_chat_member(FSUB_CHANNEL_ID, user_id)
-        if member.status in [enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED]: return False
+        if member.status in [enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED]:
+            return False
         return True
-    except:
+    except Exception:
         return False
 
 async def ensure_fsub(client, message):
     user_id = message.from_user.id
-    if await check_fsub(client, user_id): return True
+    if await check_fsub(client, user_id):
+        return True
     
     btn = [
         [InlineKeyboardButton("📢 Join Channel", url=FSUB_CHANNEL_LINK)],
@@ -208,9 +207,11 @@ def save_user(user_id, name):
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
-    if banned_col.find_one({"user_id": user_id}): return 
+    if banned_col.find_one({"user_id": user_id}):
+        return 
     save_user(user_id, message.from_user.first_name)
-    if not await ensure_fsub(client, message): raise StopPropagation
+    if not await ensure_fsub(client, message):
+        raise StopPropagation
 
     btn = [
         [InlineKeyboardButton("🚀 Open Netflix Mini App", web_app=WebAppInfo(url=WEBAPP_URL))],
@@ -223,8 +224,10 @@ async def start_command(client, message):
         f"Neeche diye gaye button se hamara **Mini App** kholkar seedhe Netflix style mein movies dekhein!\n\n"
         f"🔎 Ya koi bhi movie ka naam direct likhkar bhejein."
     )
-    try: await message.reply_photo(photo=START_PIC, caption=welcome_text, reply_markup=InlineKeyboardMarkup(btn))
-    except: await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(btn)) 
+    try:
+        await message.reply_photo(photo=START_PIC, caption=welcome_text, reply_markup=InlineKeyboardMarkup(btn))
+    except Exception:
+        await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(btn)) 
     raise StopPropagation
 
 @app.on_message(filters.private)
@@ -242,20 +245,24 @@ async def receive_webapp_data(client, message):
                 asyncio.create_task(auto_delete_task(client, message.chat.id, [msg.id, w_msg.id]))
         else:
             await message.reply_text("❌ Yeh movie nahi mili.")
-    except:
+    except Exception:
         await message.reply_text("❌ Error fetching file.")
     raise StopPropagation
 
 async def auto_delete_task(client, chat_id, message_ids):
     await asyncio.sleep(600) 
-    try: await client.delete_messages(chat_id, message_ids)
-    except: pass
+    try:
+        await client.delete_messages(chat_id, message_ids)
+    except Exception:
+        pass
 
 @app.on_message(filters.text & filters.private & ~filters.bot)
 async def search_movie(client, message):
-    if message.text.startswith("/"): return
+    if message.text.startswith("/"):
+        return
     user_id = message.from_user.id
-    if not await ensure_fsub(client, message): raise StopPropagation
+    if not await ensure_fsub(client, message):
+        raise StopPropagation
 
     search_query = message.text.lower().strip()
     movies = list(movies_col.find({"movie_name": {"$regex": re.escape(search_query)}}).limit(20))
@@ -292,36 +299,28 @@ async def button_click(client, query):
             await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
 
 # ==========================================
-# 🚀 BULLETPROOF AUTO-RETRY BOT RUNNER
+# 🚀 PURE ASYNC RUNNER (ZERO THREAD CONFLICTS)
 # ==========================================
-def run_telegram_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    async def main_bot():
-        while True:
-            try:
-                await app.start()
-                print("🚀 Telegram Bot started successfully in background thread...")
-                break
-            except FloodWait as e:
-                print(f"⚠️ Telegram FloodWait: Sleeping for {e.value} seconds...")
-                await asyncio.sleep(e.value + 2)
-            except Exception as e:
-                print(f"⚠️ Bot start error: {e}. Retrying in 5 seconds...")
-                await asyncio.sleep(5)
-                
-        while True:
-            await asyncio.sleep(3600)
+async def start_services():
+    # 1. Start Telegram Bot safely with FloodWait handling
+    while True:
+        try:
+            await app.start()
+            print("🚀 Telegram Bot started and listening for commands...")
+            break
+        except FloodWait as e:
+            print(f"⚠️ Telegram FloodWait: Sleeping for {e.value} seconds...")
+            await asyncio.sleep(e.value + 2)
+        except Exception as e:
+            print(f"⚠️ Error starting bot: {e}. Retrying in 5 seconds...")
+            await asyncio.sleep(5)
 
-    loop.run_until_complete(main_bot())
+    # 2. Run FastAPI Web Server on Render PORT
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Starting Web App Server on port {port}...")
+    config = uvicorn.Config(app=web_app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == "__main__":
-    # Telegram Bot ko background thread me safe tarike se chalayein
-    t = threading.Thread(target=run_telegram_bot, daemon=True)
-    t.start()
-    
-    # FastAPI/Uvicorn ko main process me chalayein taaki Render port detect kar sake
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Starting Netflix Mini App on port {port}...")
-    uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
+    asyncio.run(start_services())
