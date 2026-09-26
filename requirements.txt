@@ -2,3 +2,4 @@ pyrogram
 pymongo
 dnspython
 aiohttp
+difflib
