@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-from pyrogram import Client, filters, enums, StopPropagation
+from pyrogram import Client, filters, enums, StopPropagation, idle
 from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import (
     InlineKeyboardMarkup, 
@@ -227,7 +227,6 @@ async def start_command(client, message):
     except: await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(btn)) 
     raise StopPropagation
 
-# ✅ Fixed Web App Data Handler
 @app.on_message(filters.private)
 async def receive_webapp_data(client, message):
     if not message.web_app_data:
@@ -293,13 +292,20 @@ async def button_click(client, query):
             await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
 
 # ==========================================
-# 🚀 RENDER PORT-OPTIMIZED ENTRYPOINT
+# 🚀 SAFE THREADED BOT & PORT RUNNER
 # ==========================================
+def run_telegram_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app.start()
+    loop.run_until_complete(idle())
+    app.stop()
+
 if __name__ == "__main__":
-    # Telegram Bot ko background thread me chalayein
-    t = threading.Thread(target=app.run, daemon=True)
+    # Telegram Bot ko safe dedicated loop ke sath background thread me chalayein
+    t = threading.Thread(target=run_telegram_bot, daemon=True)
     t.start()
-    print("🚀 Telegram Bot started in background...")
+    print("🚀 Telegram Bot started successfully in background thread...")
     
     # FastAPI/Uvicorn ko main process me chalayein taaki Render port detect kar sake
     port = int(os.environ.get("PORT", 10000))
