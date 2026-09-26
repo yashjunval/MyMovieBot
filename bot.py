@@ -5,7 +5,13 @@ import aiohttp
 import difflib  
 import google.generativeai as genai 
 from pyrogram import Client, filters, enums, StopPropagation
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton,
+    BotCommand, 
+    BotCommandScopeDefault, 
+    BotCommandScopeChat
+)
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
@@ -76,6 +82,33 @@ async def get_imdb_info(query):
         return None
 
 # ==========================================
+# 🛠️ MENU SETUP COMMAND (Auto Menu Creation)
+# ==========================================
+@app.on_message(filters.command("setmenu") & filters.private & filters.user(ADMIN_ID))
+async def set_bot_menus(client, message):
+    user_commands = [
+        BotCommand("start", "Bot ko restart karein"),
+        BotCommand("ai", "🤖 AI Movie Buddy"),
+        BotCommand("trending", "📈 Top 10 Searches"),
+        BotCommand("watchlist", "📌 My Saved Movies")
+    ]
+    await client.set_bot_commands(user_commands, scope=BotCommandScopeDefault())
+    
+    admin_commands = [
+        BotCommand("start", "Start the bot"),
+        BotCommand("stats", "📊 Bot Statistics"),
+        BotCommand("broadcast", "📢 Send Message to All"),
+        BotCommand("addvip", "👑 Add VIP User"),
+        BotCommand("rmvip", "❌ Remove VIP User"),
+        BotCommand("ai", "🤖 AI Movie Buddy"),
+        BotCommand("trending", "📈 Top 10 Searches"),
+        BotCommand("watchlist", "📌 My Saved Movies")
+    ]
+    await client.set_bot_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+    await message.reply_text("✅ **Menu Set Successfully!**\nAb aapko Admin wale commands dikhenge aur baaki users ko sirf unke commands.")
+    raise StopPropagation
+
+# ==========================================
 # 🤖 AI & COMMANDS
 # ==========================================
 @app.on_message(filters.command("ai") & filters.private)
@@ -121,15 +154,33 @@ async def trending_movies(client, message):
     await message.reply_text(text)
     raise StopPropagation
 
+@app.on_message(filters.command("addvip") & filters.private & filters.user(ADMIN_ID))
+async def add_vip(client, message):
+    if len(message.command) > 1:
+        try:
+            uid = int(message.command[1])
+            vip_col.update_one({"user_id": uid}, {"$set": {"user_id": uid}}, upsert=True)
+            await message.reply_text(f"👑 ✅ User `{uid}` ab VIP ban gaya hai!")
+        except: pass
+    raise StopPropagation
+
+@app.on_message(filters.command("rmvip") & filters.private & filters.user(ADMIN_ID))
+async def remove_vip(client, message):
+    if len(message.command) > 1:
+        try:
+            uid = int(message.command[1])
+            vip_col.delete_one({"user_id": uid})
+            await message.reply_text(f"❌ User `{uid}` ab VIP nahi raha.")
+        except: pass
+    raise StopPropagation
+
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
     if banned_col.find_one({"user_id": user_id}): return 
     save_user(user_id, message.from_user.first_name)
     
-    # Check if user has joined the channel
     if not await check_fsub(client, user_id):
-        # 🔥 Verify Button Logic Add Kiya Hai Yahan
         btn = [
             [InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)],
             [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]
@@ -145,6 +196,30 @@ async def start_command(client, message):
     )
     try: await message.reply_photo(photo=START_PIC, caption=welcome_text)
     except: await message.reply_text(welcome_text) 
+    raise StopPropagation
+
+@app.on_message(filters.command("stats") & filters.private & filters.user(ADMIN_ID))
+async def admin_stats(client, message):
+    total_users = users_col.count_documents({})
+    total_movies = movies_col.count_documents({})
+    total_banned = banned_col.count_documents({})
+    total_vip = vip_col.count_documents({})
+    text = f"📊 **ADMIN DASHBOARD** 📊\n\n👥 **Total Users:** `{total_users}`\n🎬 **Total Files:** `{total_movies}`\n👑 **VIP Users:** `{total_vip}`\n🚫 **Spammers:** `{total_banned}`"
+    await message.reply_text(text)
+    raise StopPropagation
+
+@app.on_message(filters.command("broadcast") & filters.private & filters.user(ADMIN_ID) & filters.reply)
+async def admin_broadcast(client, message):
+    users = list(users_col.find({}))
+    await message.reply_text(f"🚀 Broadcast started for {len(users)} users...")
+    success = 0
+    for user in users:
+        try:
+            await message.reply_to_message.copy(user["user_id"])
+            success += 1
+            await asyncio.sleep(0.5) 
+        except: pass
+    await message.reply_text(f"✅ **Broadcast Complete!**\nSuccessfully sent to {success} out of {len(users)} users.")
     raise StopPropagation
 
 # ==========================================
@@ -185,7 +260,7 @@ async def save_movie_to_db(client, message):
 # ==========================================
 # 4. USER SEARCH
 # ==========================================
-@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "trending", "addvip", "rmvip", "ai", "watchlist"]))
+@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "trending", "addvip", "rmvip", "ai", "watchlist", "setmenu"]))
 async def search_movie(client, message):
     user_id = message.from_user.id
     
@@ -214,7 +289,6 @@ async def search_movie(client, message):
 
     save_user(user_id, message.from_user.first_name)
     if not await check_fsub(client, user_id):
-        # 🔥 Search karne par bhi Verify button aayega
         btn = [
             [InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)],
             [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]
@@ -269,15 +343,10 @@ async def auto_delete_task(client, chat_id, message_ids):
 async def button_click(client, query):
     data = query.data
 
-    # ==========================================
-    # 🔥 VERIFY BUTTON CLICK LOGIC
-    # ==========================================
     if data == "verify_fsub":
-        user_id = query.from_user.id
-        is_joined = await check_fsub(client, user_id)
+        is_joined = await check_fsub(client, query.from_user.id)
         if is_joined:
             await query.answer("✅ Verification Successful! Ab aap movie search kar sakte hain.", show_alert=True)
-            # Welcome message wapas bhejenge verification hone par
             welcome_text = (
                 f"👋 **Hᴇʏ, {query.from_user.first_name or 'User'}** ❞\n\n"
                 f"🎬 **Mᴀɪɴ Eᴋ Aᴅᴠᴀɴᴄᴇ Mᴏᴠɪᴇ Bᴏᴛ Hᴏᴏɴ!**\n\n"
@@ -286,13 +355,11 @@ async def button_click(client, query):
             )
             try: await query.message.reply_photo(photo=START_PIC, caption=welcome_text)
             except: await query.message.reply_text(welcome_text) 
-            # Purana verify wala message delete kar denge
             await query.message.delete()
         else:
             await query.answer("❌ Aapne abhi tak channel join nahi kiya hai. Pehle join karein!", show_alert=True)
         return
 
-    # --- WATCHLIST LOGIC ---
     if data.startswith("wladd_"):
         mid = data.split("_")[1]
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": mid}}, upsert=True)
@@ -392,5 +459,5 @@ async def button_click(client, query):
             asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_ids))
 
 if __name__ == "__main__":
-    print("🚀 Ultimate VIP Bot is Alive (Verify Button, Watchlist & AI Enabled)...")
+    print("🚀 Ultimate VIP Bot is Alive (Menu Auto-Setup Added)...")
     app.run()
