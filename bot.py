@@ -227,8 +227,11 @@ async def start_command(client, message):
     except: await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(btn)) 
     raise StopPropagation
 
-@app.on_message(filters.web_app_data & filters.private)
+# ✅ Fixed Web App Data Handler
+@app.on_message(filters.private)
 async def receive_webapp_data(client, message):
+    if not message.web_app_data:
+        return
     mid = message.web_app_data.data
     try:
         movie = movies_col.find_one({"_id": ObjectId(mid)})
