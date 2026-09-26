@@ -127,9 +127,14 @@ async def start_command(client, message):
     if banned_col.find_one({"user_id": user_id}): return 
     save_user(user_id, message.from_user.first_name)
     
+    # Check if user has joined the channel
     if not await check_fsub(client, user_id):
-        btn = [[InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)]]
-        await message.reply_text("⚠️ **Wait! Pehle hamara official channel join karein!**", reply_markup=InlineKeyboardMarkup(btn))
+        # 🔥 Verify Button Logic Add Kiya Hai Yahan
+        btn = [
+            [InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)],
+            [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]
+        ]
+        await message.reply_text("⚠️ **Wait! Pehle hamara official channel join karein, uske baad 'Verify' dabayein!**", reply_markup=InlineKeyboardMarkup(btn))
         raise StopPropagation
 
     welcome_text = (
@@ -178,13 +183,12 @@ async def save_movie_to_db(client, message):
     raise StopPropagation
 
 # ==========================================
-# 4. USER SEARCH (Bugs Fixed)
+# 4. USER SEARCH
 # ==========================================
 @app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "trending", "addvip", "rmvip", "ai", "watchlist"]))
 async def search_movie(client, message):
     user_id = message.from_user.id
     
-    # Bug Fix: Ignore forwarded messages and very long paragraphs
     if message.forward_date or message.forward_from: return
     if len(message.text) > 40: 
         await message.reply_text("❌ Kripya sirf movie ka chhota naam likhein (Max 40 letters).")
@@ -210,8 +214,12 @@ async def search_movie(client, message):
 
     save_user(user_id, message.from_user.first_name)
     if not await check_fsub(client, user_id):
-        btn = [[InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)]]
-        await message.reply_text("⚠️ **Pehle hamara official channel join karein!**", reply_markup=InlineKeyboardMarkup(btn))
+        # 🔥 Search karne par bhi Verify button aayega
+        btn = [
+            [InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)],
+            [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]
+        ]
+        await message.reply_text("⚠️ **Pehle hamara official channel join karein, fir 'Verify' dabayein!**", reply_markup=InlineKeyboardMarkup(btn))
         raise StopPropagation
 
     search_query = message.text.lower().strip()
@@ -247,7 +255,6 @@ async def search_movie(client, message):
     for movie in movies:
         mid = str(movie["_id"])
         buttons.append([InlineKeyboardButton(f"📁 {movie.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-        # Bug Fix: Watch Online hataya aur Watchlist ko seedha laya
         buttons.append([InlineKeyboardButton("📌 Add to Watchlist", callback_data=f"wladd_{mid}")])
         
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -262,6 +269,30 @@ async def auto_delete_task(client, chat_id, message_ids):
 async def button_click(client, query):
     data = query.data
 
+    # ==========================================
+    # 🔥 VERIFY BUTTON CLICK LOGIC
+    # ==========================================
+    if data == "verify_fsub":
+        user_id = query.from_user.id
+        is_joined = await check_fsub(client, user_id)
+        if is_joined:
+            await query.answer("✅ Verification Successful! Ab aap movie search kar sakte hain.", show_alert=True)
+            # Welcome message wapas bhejenge verification hone par
+            welcome_text = (
+                f"👋 **Hᴇʏ, {query.from_user.first_name or 'User'}** ❞\n\n"
+                f"🎬 **Mᴀɪɴ Eᴋ Aᴅᴠᴀɴᴄᴇ Mᴏᴠɪᴇ Bᴏᴛ Hᴏᴏɴ!**\n\n"
+                f"🔎 Kᴏɪ ʙʜɪ ᴍᴏᴠɪᴇ ʏᴀ ᴡᴇʙ sᴇʀɪᴇs ᴅᴏᴡɴʟᴏᴀᴅ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ ʙᴀs ᴜsᴋᴀ ɴᴀᴀᴍ ʟɪᴋʜ ᴋᴀʀ ʙʜᴇᴊᴇɪɴ.\n\n"
+                f"🤖 AI Recommendation: `/ai <movie>`\n📈 Trending: `/trending`"
+            )
+            try: await query.message.reply_photo(photo=START_PIC, caption=welcome_text)
+            except: await query.message.reply_text(welcome_text) 
+            # Purana verify wala message delete kar denge
+            await query.message.delete()
+        else:
+            await query.answer("❌ Aapne abhi tak channel join nahi kiya hai. Pehle join karein!", show_alert=True)
+        return
+
+    # --- WATCHLIST LOGIC ---
     if data.startswith("wladd_"):
         mid = data.split("_")[1]
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": mid}}, upsert=True)
@@ -361,5 +392,5 @@ async def button_click(client, query):
             asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_ids))
 
 if __name__ == "__main__":
-    print("🚀 Ultimate VIP Bot is Alive (Fixed Bugs, Watchlist & AI Enabled)...")
+    print("🚀 Ultimate VIP Bot is Alive (Verify Button, Watchlist & AI Enabled)...")
     app.run()
