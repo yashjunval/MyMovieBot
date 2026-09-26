@@ -39,8 +39,8 @@ START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg"
 OMDB_API_KEY = "ec736b29" 
 GEMINI_API_KEY = "AQ.Ab8RN6JREi500rTtVQHd0EHnxEdMZ6CedGiOB-O-XNtOn8tpAw" 
 
-# ✅ Exact Live Render URL
-WEBAPP_URL = "https://mymoviebot-1-u4v3.onrender.com"
+# ✅ Correct Working Render URL
+WEBAPP_URL = "https://movie1820-bot.onrender.com"
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["MovieBot"]
