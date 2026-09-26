@@ -3,3 +3,6 @@ tgcrypto
 pymongo
 google-generativeai
 aiohttp
+fastapi
+uvicorn
+
