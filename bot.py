@@ -23,7 +23,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. 🚀 CREDENTIALS & SETUP 
 # ==========================================
-BOT_TOKEN = "8600027374:AAEIW_jS0yL1O4WfNswL-7PAwqp5C7z2wj8" 
+BOT_TOKEN = "8600027374:AAHc-yEUYrqy8pe4INKgpKAr-PMVpLR8vtQ" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
