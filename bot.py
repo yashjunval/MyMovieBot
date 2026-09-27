@@ -21,9 +21,9 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. 🚀 CREDENTIALS & SETUP 
+# 1. 🚀 CREDENTIALS & SETUP (NEW TOKEN ADDED)
 # ==========================================
-BOT_TOKEN = "8600027374:AAHc-yEUYrqy8pe4INKgpKAr-PMVpLR8vtQ" 
+BOT_TOKEN = "8600027374:AAEuZMjctpMYiLM-iwnm84HvpMQWOQsRhJU" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
@@ -36,7 +36,7 @@ START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg"
 OMDB_API_KEY = "ec736b29" 
 GEMINI_API_KEY = "AQ.Ab8RN6JREi500rTtVQHd0EHnxEdMZ6CedGiOB-O-XNtOn8tpAw" 
 
-# Safe MongoDB Connection with Auto-Ping for Stability
+# Safe MongoDB Connection
 mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = mongo_client["MovieBot"]
 movies_col = db["Movies"]
@@ -157,7 +157,7 @@ async def user_profile(client, message):
     raise StopPropagation
 
 # ==========================================
-# 📩 IN-BOT SMART REQUEST SYSTEM (With Name & Username)
+# 📩 IN-BOT SMART REQUEST SYSTEM
 # ==========================================
 @app.on_message(filters.command("request") & filters.private)
 async def request_movie(client, message):
@@ -173,8 +173,6 @@ async def request_movie(client, message):
     username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
 
     btn = [[InlineKeyboardButton("✅ Mark as Uploaded", callback_data=f"reqdone_{user_id}")]]
-    
-    # Ab admin ke paas naam, username aur ID teeno dikhenge!
     admin_text = (
         f"📩 **NEW MOVIE REQUEST**\n\n"
         f"👤 **User Name:** {user_name}\n"
@@ -324,24 +322,33 @@ async def admin_broadcast(client, message):
     raise StopPropagation
 
 # ==========================================
-# 3. 📁 AUTO-SAVE (Clean Name without Underscores)
+# 3. 📁 AUTO-SAVE (Clean Name + No Links/Captions)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
-    try: copied_msg = await message.copy(DB_CHANNEL_ID)
-    except:
-        await message.reply_text("❌ Error: Bot ko Database channel mein admin banayein.")
+    media = message.document or message.video
+    if not media:
+        await message.reply_text("❌ Kripya valid document ya video bhejein.")
         raise StopPropagation
 
-    media = message.document or message.video
     exact_file_name = getattr(media, "file_name", None) or "movie_file.mp4"
     
-    # Clean Name Fix (Removes underscores and dots for normal searching)
+    # UnderScores aur Dots ko Space me badal kar Clean Name banana
     base_name = os.path.splitext(exact_file_name)[0]
     clean_movie_name = base_name.lower().replace("_", " ").replace(".", " ")
     clean_movie_name = re.sub(r'\s+', ' ', clean_movie_name).strip()
     search_keyword = clean_movie_name
     
+    try:
+        # file_id se bhejne par dusre channel ka koi bhi link ya caption copy nahi hoga (Blank Caption)
+        if message.document:
+            copied_msg = await client.send_document(chat_id=DB_CHANNEL_ID, document=media.file_id, caption="")
+        elif message.video:
+            copied_msg = await client.send_video(chat_id=DB_CHANNEL_ID, video=media.file_id, caption="")
+    except Exception as e:
+        await message.reply_text(f"❌ Error: Bot ko Database channel mein admin banayein. ({e})")
+        raise StopPropagation
+
     quality_tags, lang_tags, season_tags, episode_tags = [], [], [], []
     if "480p" in search_keyword: quality_tags.append("480p")
     if "720p" in search_keyword: quality_tags.append("720p")
@@ -361,11 +368,11 @@ async def save_movie_to_db(client, message):
         "movie_name": search_keyword, "file_name": exact_file_name, "message_id": copied_msg.id,
         "quality": quality_tags, "language": lang_tags, "season": list(set(season_tags)), "episode": list(set(episode_tags))
     })
-    await message.reply_text(f"✅ **Save ho gayi (Clean Name)!**\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Bina Link/Caption ke Clean Save ho gayi!**\n📁 `{exact_file_name}`")
     raise StopPropagation
 
 # ==========================================
-# 4. 🔍 USER SEARCH (With Anti-Spam, IMDb & Filter Buttons)
+# 4. 🔍 USER SEARCH (Anti-Spam + Filters Fixed)
 # ==========================================
 @app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "trending", "addvip", "rmvip", "ai", "watchlist", "profile", "request", "setmenu"]))
 async def search_movie(client, message):
@@ -425,7 +432,7 @@ async def search_movie(client, message):
     cb_sq = search_query[:20] 
     
     buttons = [
-        [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_pixel_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{cb_sq}")],
+        [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{cb_sq}")],
         [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{cb_sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{cb_sq}")]
     ]
     
@@ -475,7 +482,7 @@ async def button_click(client, query):
             try: await query.message.delete()
             except: pass
         else:
-            await query.answer("❌ Aapne abhi तक channel join nahi kiya hai. Pehle join karein!", show_alert=True)
+            await query.answer("❌ Aapne abhi tak channel join nahi kiya hai. Pehle join karein!", show_alert=True)
         return
 
     if data.startswith("wladd_"):
@@ -484,21 +491,22 @@ async def button_click(client, query):
         await query.answer("📌 Watchlist me save ho gayi!", show_alert=True)
         return
 
-    if data.startswith("filter_pixel_"):
+    # 🛠️ FULLY FIXED FILTER SYSTEM (Mapped Correctly with Database)
+    if data.startswith("filter_quality_"):
         sq = data.split("_", 2)[2]
         btns = [
-            [InlineKeyboardButton("480p", callback_data=f"apply_pixel_480p_{sq}"), InlineKeyboardButton("720p", callback_data=f"apply_pixel_720p_{sq}")],
-            [InlineKeyboardButton("1080p", callback_data=f"apply_pixel_1080p_{sq}"), InlineKeyboardButton("4K", callback_data=f"apply_pixel_4k_{sq}")],
+            [InlineKeyboardButton("480p", callback_data=f"apply_quality_480p_{sq}"), InlineKeyboardButton("720p", callback_data=f"apply_quality_720p_{sq}")],
+            [InlineKeyboardButton("1080p", callback_data=f"apply_quality_1080p_{sq}"), InlineKeyboardButton("4K", callback_data=f"apply_quality_4k_{sq}")],
             [InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]
         ]
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         except MessageNotModified: pass
         
-    elif data.startswith("filter_lang_"):
+    elif data.startswith("filter_language_"):
         sq = data.split("_", 2)[2]
         btns = [
-            [InlineKeyboardButton("Hindi", callback_data=f"apply_lang_hindi_{sq}"), InlineKeyboardButton("English", callback_data=f"apply_lang_english_{sq}")],
-            [InlineKeyboardButton("Dual Audio", callback_data=f"apply_lang_dual audio_{sq}")],
+            [InlineKeyboardButton("Hindi", callback_data=f"apply_language_hindi_{sq}"), InlineKeyboardButton("English", callback_data=f"apply_language_english_{sq}")],
+            [InlineKeyboardButton("Dual Audio", callback_data=f"apply_language_dual audio_{sq}")],
             [InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]
         ]
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
@@ -526,9 +534,11 @@ async def button_click(client, query):
         
     elif data.startswith("apply_"):
         parts = data.split("_", 3)
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(parts[3])}, parts[1]: parts[2]}).limit(50))
+        # parts: [0]="apply", [1]="quality"/"language"/"season"/"episode", [2]=value, [3]=search_query
+        field, value, sq = parts[1], parts[2], parts[3]
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}, field: value}).limit(50))
         if not movies: return await query.answer("❌ File nahi mili!", show_alert=True)
-        buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{parts[3]}")]]
+        buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]]
         for m in movies:
             mid = str(m["_id"])
             buttons.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
@@ -540,7 +550,7 @@ async def button_click(client, query):
         sq = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(50))
         buttons = [
-            [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_pixel_{sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_lang_{sq}")],
+            [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{sq}")],
             [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{sq}")]
         ]
         yt_query = sq.replace(" ", "+") + "+trailer"
