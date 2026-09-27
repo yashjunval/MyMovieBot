@@ -157,7 +157,7 @@ async def user_profile(client, message):
     raise StopPropagation
 
 # ==========================================
-# 📩 IN-BOT SMART REQUEST SYSTEM
+# 📩 IN-BOT SMART REQUEST SYSTEM (With Name & Username)
 # ==========================================
 @app.on_message(filters.command("request") & filters.private)
 async def request_movie(client, message):
@@ -170,9 +170,18 @@ async def request_movie(client, message):
     req_movie = message.text.split(" ", 1)[1][:50]
     user_id = message.from_user.id
     user_name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
 
     btn = [[InlineKeyboardButton("✅ Mark as Uploaded", callback_data=f"reqdone_{user_id}")]]
-    admin_text = f"📩 **NEW MOVIE REQUEST**\n\n👤 **User:** {user_name} (`{user_id}`)\n🎬 **Movie:** `{req_movie}`"
+    
+    # Ab admin ke paas naam, username aur ID teeno dikhenge!
+    admin_text = (
+        f"📩 **NEW MOVIE REQUEST**\n\n"
+        f"👤 **User Name:** {user_name}\n"
+        f"🔗 **Username:** {username}\n"
+        f"🆔 **User ID:** `{user_id}`\n"
+        f"🎬 **Movie:** `{req_movie}`"
+    )
     
     try:
         await client.send_message(ADMIN_ID, admin_text, reply_markup=InlineKeyboardMarkup(btn))
