@@ -12,9 +12,9 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. 🚀 CREDENTIALS & SETUP (NEW TOKEN)
+# 1. 🚀 CREDENTIALS & SETUP (NEW TOKEN ADDED)
 # ==========================================
-BOT_TOKEN = "8600027374:AAEuZMjctpMYiLM-iwnm84HvpMQWOQsRhJU" 
+BOT_TOKEN = "8600027374:AAFjSg_NeOf53zl5XTE94h8ceK0kOgwaABw" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
@@ -28,7 +28,6 @@ mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = mongo_client["MovieBot"]
 movies_col = db["Movies"]
 users_col = db["Users"] 
-vip_col = db["VIPUsers"]      
 watchlist_col = db["Watchlist"] 
 
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
@@ -75,14 +74,14 @@ async def request_movie(client, message):
     
     try:
         await client.send_message(ADMIN_ID, admin_text, reply_markup=InlineKeyboardMarkup(btn))
-        await message.reply_text("✅ Request admin ko bhej di gayi hai!")
+        await message.reply_text("✅ Aapki request admin ko bhej di gayi hai!")
     except: pass
     raise StopPropagation
 
 @app.on_message(filters.command("watchlist") & filters.private)
 async def show_watchlist(client, message):
     wl = watchlist_col.find_one({"user_id": message.from_user.id})
-    if not wl or not wl.get("movies"): return await message.reply_text("📌 Watchlist khali hai!")
+    if not wl or not wl.get("movies"): return await message.reply_text("📌 Aapki Watchlist khali hai!")
     text = "📌 **MY WATCHLIST**\n\n"
     for i, mid in enumerate(wl["movies"][:20], 1):
         movie = movies_col.find_one({"_id": ObjectId(mid)})
@@ -95,7 +94,7 @@ async def show_watchlist(client, message):
 # ==========================================
 @app.on_message(filters.command("stats") & filters.private & filters.user(ADMIN_ID))
 async def admin_stats(client, message):
-    await message.reply_text(f"📊 **STATS**\nUsers: `{users_col.count_documents({})}`\nFiles: `{movies_col.count_documents({})}`")
+    await message.reply_text(f"📊 **STATS**\n👥 Users: `{users_col.count_documents({})}`\n🎬 Files: `{movies_col.count_documents({})}`")
     raise StopPropagation
 
 @app.on_message(filters.command("broadcast") & filters.private & filters.user(ADMIN_ID) & filters.reply)
@@ -117,7 +116,7 @@ async def save_movie_to_db(client, message):
     if not media: return
     exact_file_name = getattr(media, "file_name", None) or "movie_file.mp4"
     
-    # 🛠️ CLEAN NAME & DB TAGS
+    # Clean Name & Remove Underscores for Searching
     clean_movie_name = re.sub(r'\s+', ' ', os.path.splitext(exact_file_name)[0].lower().replace("_", " ").replace(".", " ")).strip()
     q_tags, l_tags, s_tags, e_tags = [], [], [], []
     for q in ["480p", "720p", "1080p", "4k"]: 
@@ -130,7 +129,7 @@ async def save_movie_to_db(client, message):
         e_tags.append(f"E{ep.replace(' ', '')}")
 
     try:
-        # 🔥 FIX: Send file using file_id to strip promo links, but KEEP the filename as caption for searching!
+        # 🔥 FIX: Caption mein wapas file ka naam lagaya, taaki search me aaye aur dusre channel ka text hat jaye!
         clean_caption = f"`{exact_file_name}`"
         if message.document: copied_msg = await client.send_document(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
         else: copied_msg = await client.send_video(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
@@ -140,7 +139,7 @@ async def save_movie_to_db(client, message):
         "movie_name": clean_movie_name, "file_name": exact_file_name, "message_id": copied_msg.id,
         "quality": q_tags, "language": l_tags, "season": list(set(s_tags)), "episode": list(set(e_tags))
     })
-    await message.reply_text(f"✅ **Saved!**\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Saved! (Clean File & Caption)**\n📁 `{exact_file_name}`")
     raise StopPropagation
 
 # ==========================================
@@ -173,17 +172,18 @@ async def search_movie(client, message):
     raise StopPropagation
 
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)
+    await asyncio.sleep(600) # 10 Minutes
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
 @app.on_callback_query()
 async def callbacks(client, query):
     data = query.data
+    
     if data.startswith("reqdone_"):
         if query.from_user.id != ADMIN_ID: return
         try:
-            await client.send_message(int(data.split("_")[1]), "🎉 **Movie Uploaded!** Search now.")
+            await client.send_message(int(data.split("_")[1]), "🎉 **Movie Uploaded!** Bot me search karein.")
             await query.message.edit_text("✅ Notified user!")
         except: await query.answer("Failed to notify", show_alert=True)
         
@@ -201,7 +201,7 @@ async def callbacks(client, query):
         movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
             msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"])
-            if not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
+            if query.from_user.id != ADMIN_ID:
                 w_msg = await query.message.reply_text("⚠️ Yeh file 10 min mein delete ho jayegi.")
                 asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
@@ -215,7 +215,7 @@ async def callbacks(client, query):
                 msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"])
                 sent.append(msg.id)
                 await asyncio.sleep(0.3)
-        if sent and not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
+        if sent and query.from_user.id != ADMIN_ID:
             w_msg = await query.message.reply_text("⚠️ Yeh sabhi files 10 min mein delete ho jayengi.")
             sent.append(w_msg.id)
             asyncio.create_task(auto_del(client, query.message.chat.id, sent))
@@ -268,4 +268,5 @@ def run_port_server():
 
 if __name__ == "__main__":
     threading.Thread(target=run_port_server, daemon=True).start()
+    print("🚀 CLEAN MOVIE BOT STARTED!")
     app.run()
