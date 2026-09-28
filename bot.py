@@ -1,27 +1,18 @@
 import re
-import time
 import asyncio
 import threading
 import os
 import http.server
 import socketserver
 import difflib  
-import aiohttp
-import google.generativeai as genai 
 from pyrogram import Client, filters, enums, StopPropagation
-from pyrogram.errors import FloodWait, MessageNotModified
-from pyrogram.types import (
-    InlineKeyboardMarkup, 
-    InlineKeyboardButton,
-    BotCommand, 
-    BotCommandScopeDefault, 
-    BotCommandScopeChat
-)
+from pyrogram.errors import MessageNotModified
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. 🚀 CREDENTIALS & SETUP (NEW TOKEN ADDED)
+# 1. 🚀 CREDENTIALS & SETUP (NEW TOKEN)
 # ==========================================
 BOT_TOKEN = "8600027374:AAEuZMjctpMYiLM-iwnm84HvpMQWOQsRhJU" 
 ADMIN_ID = 6855375693
@@ -29,585 +20,252 @@ API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
 MONGO_URL = "mongodb+srv://Movie123:Yash123@cluster0.bi61te2.mongodb.net/?appName=Cluster0&compressors=zlib"
 DB_CHANNEL_ID = -1004448866853 
-
 FSUB_CHANNEL_ID = -1004442475534 
 FSUB_CHANNEL_LINK = "https://t.me/+KAQT3ciLAfExMTY1" 
 START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg" 
-OMDB_API_KEY = "ec736b29" 
-GEMINI_API_KEY = "AQ.Ab8RN6JREi500rTtVQHd0EHnxEdMZ6CedGiOB-O-XNtOn8tpAw" 
 
-# Safe MongoDB Connection
 mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = mongo_client["MovieBot"]
 movies_col = db["Movies"]
 users_col = db["Users"] 
-banned_col = db["BannedUsers"]
-trending_col = db["Trending"] 
 vip_col = db["VIPUsers"]      
 watchlist_col = db["Watchlist"] 
 
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
-SPAM_TRACKER = {}
-
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    print("AI Setup Error:", e)
 
 # ==========================================
-# ⚡ STRICT FORCE SUB (FSUB) LOGIC
+# ⚡ FORCE SUB LOGIC
 # ==========================================
-@app.on_chat_join_request(filters.chat(FSUB_CHANNEL_ID))
-async def approve_join_req(client, message):
-    try:
-        await client.approve_chat_join_request(chat_id=message.chat.id, user_id=message.from_user.id)
-        await client.send_message(message.from_user.id, "✅ **Aapki join request accept ho gayi hai! Ab aap bot me movie search kar sakte hain.**")
-    except: pass
-
 async def check_fsub(client, user_id):
-    if not FSUB_CHANNEL_ID or FSUB_CHANNEL_ID == -1000000000000: return True 
+    if not FSUB_CHANNEL_ID: return True 
     try:
         member = await client.get_chat_member(FSUB_CHANNEL_ID, user_id)
         if member.status in [enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED]: return False
         return True
-    except:
-        return False
+    except: return False
 
 async def ensure_fsub(client, message):
-    user_id = message.from_user.id
-    if await check_fsub(client, user_id): return True
-    
-    btn = [
-        [InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)],
-        [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]
-    ]
-    await message.reply_text("⚠️ **Aapne channel join nahi kiya hai, ya join karke left kar diya hai!**\n\nPehle hamara official channel join karein, fir 'Verify' dabayein tabhi bot aage kaam karega.", reply_markup=InlineKeyboardMarkup(btn))
+    if await check_fsub(client, message.from_user.id): return True
+    btn = [[InlineKeyboardButton("📢 Join Our Channel", url=FSUB_CHANNEL_LINK)], [InlineKeyboardButton("✅ Verify", callback_data="verify_fsub")]]
+    await message.reply_text("⚠️ **Pehle hamara official channel join karein, fir 'Verify' dabayein!**", reply_markup=InlineKeyboardMarkup(btn))
     return False
 
-def save_user(user_id, name):
-    try:
-        if not users_col.find_one({"user_id": user_id}):
-            users_col.insert_one({"user_id": user_id, "name": name, "searches": 0})
-    except: pass
-
-async def get_imdb_info(query):
-    url = f"http://www.omdbapi.com/?t={query}&apikey={OMDB_API_KEY}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                data = await response.json()
-                if data.get("Response") == "True": return data
-    except: return None
-
 # ==========================================
-# 🛠️ MENU SETUP COMMAND
+# 📩 BASIC COMMANDS & REQUEST
 # ==========================================
-@app.on_message(filters.command("setmenu") & filters.private & filters.user(ADMIN_ID))
-async def set_bot_menus(client, message):
-    user_commands = [
-        BotCommand("start", "🔄 Restart Bot"),
-        BotCommand("profile", "👤 My Dashboard"),
-        BotCommand("ai", "🤖 AI Movie Buddy"),
-        BotCommand("request", "📩 Request a Movie"),
-        BotCommand("trending", "📈 Top 10 Searches"),
-        BotCommand("watchlist", "📌 My Saved Movies")
-    ]
-    await client.set_bot_commands(user_commands, scope=BotCommandScopeDefault())
-    
-    admin_commands = [
-        BotCommand("start", "🔄 Restart Bot"),
-        BotCommand("stats", "📊 Bot Statistics"),
-        BotCommand("broadcast", "📢 Broadcast"),
-        BotCommand("addvip", "👑 Add VIP"),
-        BotCommand("rmvip", "❌ Remove VIP"),
-        BotCommand("profile", "👤 My Dashboard"),
-        BotCommand("ai", "🤖 AI Buddy"),
-        BotCommand("trending", "📈 Top 10"),
-        BotCommand("watchlist", "📌 Watchlist"),
-        BotCommand("setmenu", "🛠️ Set Menu")
-    ]
-    await client.set_bot_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
-    await message.reply_text("✅ **Menu Set Successfully!**")
-    raise StopPropagation
-
-# ==========================================
-# 👤 USER PROFILE DASHBOARD
-# ==========================================
-@app.on_message(filters.command("profile") & filters.private)
-async def user_profile(client, message):
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
+    if not users_col.find_one({"user_id": message.from_user.id}):
+        users_col.insert_one({"user_id": message.from_user.id, "name": message.from_user.first_name})
     if not await ensure_fsub(client, message): raise StopPropagation
-    user_id = message.from_user.id
-    user_doc = users_col.find_one({"user_id": user_id}) or {}
-    searches = user_doc.get("searches", 0)
-    
-    vip_status = "👑 VIP Member" if vip_col.find_one({"user_id": user_id}) else "👤 Normal User"
-    wl = watchlist_col.find_one({"user_id": user_id})
-    wl_count = len(wl.get("movies", [])) if wl else 0
-    
-    text = (
-        f"👤 **YOUR DASHBOARD** 👤\n\n"
-        f"📛 **Name:** {message.from_user.first_name}\n"
-        f"🆔 **ID:** `{user_id}`\n"
-        f"🏷️ **Status:** {vip_status}\n"
-        f"🔍 **Total Searches:** `{searches}`\n"
-        f"📌 **Movies in Watchlist:** `{wl_count}`\n"
-    )
-    await message.reply_text(text)
+
+    text = f"👋 **Hᴇʏ, {message.from_user.first_name}**\n\n🎬 **Mᴀɪɴ Eᴋ Mᴏᴠɪᴇ Bᴏᴛ HᴏᴏN!**\n🔎 Koi bhi movie/series download karne ke liye bas uska naam bhejein.\n\n📌 Watchlist: `/watchlist`"
+    try: await message.reply_photo(photo=START_PIC, caption=text)
+    except: await message.reply_text(text)
     raise StopPropagation
 
-# ==========================================
-# 📩 IN-BOT SMART REQUEST SYSTEM
-# ==========================================
 @app.on_message(filters.command("request") & filters.private)
 async def request_movie(client, message):
     if not await ensure_fsub(client, message): raise StopPropagation
-    
-    if len(message.command) < 2:
-        await message.reply_text("✍️ **Sahi format:** `/request <movie name>`\n_Example: /request The Boys Season 4_")
-        raise StopPropagation
+    if len(message.command) < 2: return await message.reply_text("✍️ **Format:** `/request <movie name>`")
         
     req_movie = message.text.split(" ", 1)[1][:50]
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name
-    username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
-
-    btn = [[InlineKeyboardButton("✅ Mark as Uploaded", callback_data=f"reqdone_{user_id}")]]
-    admin_text = (
-        f"📩 **NEW MOVIE REQUEST**\n\n"
-        f"👤 **User Name:** {user_name}\n"
-        f"🔗 **Username:** {username}\n"
-        f"🆔 **User ID:** `{user_id}`\n"
-        f"🎬 **Movie:** `{req_movie}`"
-    )
+    btn = [[InlineKeyboardButton("✅ Mark as Uploaded", callback_data=f"reqdone_{message.from_user.id}")]]
+    admin_text = f"📩 **NEW REQUEST**\n👤 {message.from_user.first_name} (`{message.from_user.id}`)\n🎬 `{req_movie}`"
     
     try:
         await client.send_message(ADMIN_ID, admin_text, reply_markup=InlineKeyboardMarkup(btn))
-        await message.reply_text(f"✅ **Aapki request admin ko bhej di gayi hai!**\nMovie upload hote hi bot aapko notify kar dega.")
-    except:
-        await message.reply_text("❌ Error: Admin tak request nahi pahunchi.")
-    raise StopPropagation
-
-# ==========================================
-# 🤖 AI RECOMMENDER
-# ==========================================
-@app.on_message(filters.command("ai") & filters.private)
-async def ai_recommender(client, message):
-    if not await ensure_fsub(client, message): raise StopPropagation
-    
-    if len(message.command) < 2:
-        await message.reply_text("🤖 **AI Movie Buddy**\n\nMujhse kuch bhi recommend karne ko kahein!\n**Example:** `/ai Best thriller movies`")
-        raise StopPropagation
-        
-    query = message.text.split(" ", 1)[1]
-    await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
-    wait_msg = await message.reply_text("🤖 _Thinking..._")
-    
-    response_text = None
-    try:
-        prompt = f"Suggest 3 popular movies or web series based on this user requirement: '{query}'. Provide a brief description for each. Keep it short, engaging, and helpful."
-        response = ai_model.generate_content(prompt)
-        if response and hasattr(response, "text") and response.text:
-            response_text = response.text
-        elif response and response.candidates:
-            response_text = response.candidates[0].content.parts[0].text
-    except Exception as e:
-        print(f"AI Error: {e}")
-        response_text = None
-            
-    if response_text:
-        await wait_msg.edit_text(f"🤖 **AI Suggestions for '{query}':**\n\n{response_text}\n\n_In movies ko download karne ke liye normal search karein!_")
-    else:
-        fallback_text = (
-            f"1. **Inception** - A top-rated sci-fi thriller matching great user interest.\n"
-            f"2. **Interstellar** - An emotional masterpiece space journey.\n"
-            f"3. **Breaking Bad** - A world-class thrilling web series.\n\n"
-            f"_Aap inme se koi bhi movie bot me direct naam likh kar search kar sakte hain!_"
-        )
-        await wait_msg.edit_text(f"🤖 **AI Suggestions for '{query}':**\n\n{fallback_text}")
+        await message.reply_text("✅ Request admin ko bhej di gayi hai!")
+    except: pass
     raise StopPropagation
 
 @app.on_message(filters.command("watchlist") & filters.private)
 async def show_watchlist(client, message):
-    if not await ensure_fsub(client, message): raise StopPropagation
-    user_data = watchlist_col.find_one({"user_id": message.from_user.id})
-    if not user_data or not user_data.get("movies"):
-        await message.reply_text("📌 Aapki Watchlist khali hai! Kisi bhi movie ke aage '📌 Add Watchlist' dabayein.")
-        raise StopPropagation
-        
-    text = "📌 **MY WATCHLIST** 📌\n\n"
-    for idx, mid in enumerate(user_data["movies"][:20], 1):
-        try:
-            movie = movies_col.find_one({"_id": ObjectId(mid)})
-            if movie: text += f"**{idx}.** `{movie['movie_name'].title()}`\n"
-        except: pass
+    wl = watchlist_col.find_one({"user_id": message.from_user.id})
+    if not wl or not wl.get("movies"): return await message.reply_text("📌 Watchlist khali hai!")
+    text = "📌 **MY WATCHLIST**\n\n"
+    for i, mid in enumerate(wl["movies"][:20], 1):
+        movie = movies_col.find_one({"_id": ObjectId(mid)})
+        if movie: text += f"**{i}.** `{movie['movie_name'].title()}`\n"
     await message.reply_text(text)
-    raise StopPropagation
-
-@app.on_message(filters.command("trending") & filters.private)
-async def trending_movies(client, message):
-    if not await ensure_fsub(client, message): raise StopPropagation
-    top_movies = list(trending_col.find().sort("count", -1).limit(10))
-    if not top_movies:
-        await message.reply_text("📉 Abhi tak koi trending data nahi hai!")
-        raise StopPropagation
-    text = "📈 **TOP 10 TRENDING SEARCHES** 📈\n\n"
-    for i, m in enumerate(top_movies, 1): text += f"**{i}.** `{m['query'].title()}` (🔥 {m['count']} Searches)\n"
-    await message.reply_text(text)
-    raise StopPropagation
-
-@app.on_message(filters.command("start") & filters.private)
-async def start_command(client, message):
-    user_id = message.from_user.id
-    if banned_col.find_one({"user_id": user_id}): return 
-    save_user(user_id, message.from_user.first_name)
-    if not await ensure_fsub(client, message): raise StopPropagation
-
-    welcome_text = (
-        f"👋 **Hᴇʏ, {message.from_user.first_name or 'User'}** ❞\n\n"
-        f"🎬 **Mᴀɪɴ Eᴋ Aᴅᴠᴀɴᴄᴇ Mᴏᴠɪᴇ Bᴏᴛ HᴏᴏN!**\n\n"
-        f"🔎 Kᴏɪ ʙʜɪ ᴍᴏᴠɪᴇ ʏᴀ ᴡᴇʙ sᴇʀɪᴇs ᴅᴏᴡɴʟᴏᴀᴅ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ ʙᴀs ᴜsᴋᴀ ɴᴀᴀᴍ ʟɪᴋʜ ᴋᴀʀ ʙʜᴇᴊᴇɪɴ.\n\n"
-        f"👤 Profile check: `/profile`\n"
-        f"🤖 AI Recommendation: `/ai <movie>`"
-    )
-    try: await message.reply_photo(photo=START_PIC, caption=welcome_text)
-    except: await message.reply_text(welcome_text) 
     raise StopPropagation
 
 # ==========================================
 # 👑 ADMIN COMMANDS
 # ==========================================
-@app.on_message(filters.command("addvip") & filters.private & filters.user(ADMIN_ID))
-async def add_vip(client, message):
-    if len(message.command) > 1:
-        try:
-            uid = int(message.command[1])
-            vip_col.update_one({"user_id": uid}, {"$set": {"user_id": uid}}, upsert=True)
-            await message.reply_text(f"👑 ✅ User `{uid}` ab VIP ban gaya hai!")
-        except: pass
-    raise StopPropagation
-
-@app.on_message(filters.command("rmvip") & filters.private & filters.user(ADMIN_ID))
-async def remove_vip(client, message):
-    if len(message.command) > 1:
-        try:
-            uid = int(message.command[1])
-            vip_col.delete_one({"user_id": uid})
-            await message.reply_text(f"❌ User `{uid}` ab VIP nahi raha.")
-        except: pass
-    raise StopPropagation
-
 @app.on_message(filters.command("stats") & filters.private & filters.user(ADMIN_ID))
 async def admin_stats(client, message):
-    total_users = users_col.count_documents({})
-    total_movies = movies_col.count_documents({})
-    total_banned = banned_col.count_documents({})
-    total_vip = vip_col.count_documents({})
-    text = f"📊 **ADMIN DASHBOARD** 📊\n\n👥 **Total Users:** `{total_users}`\n🎬 **Total Files:** `{total_movies}`\n👑 **VIP Users:** `{total_vip}`\n🚫 **Spammers:** `{total_banned}`"
-    await message.reply_text(text)
+    await message.reply_text(f"📊 **STATS**\nUsers: `{users_col.count_documents({})}`\nFiles: `{movies_col.count_documents({})}`")
     raise StopPropagation
 
 @app.on_message(filters.command("broadcast") & filters.private & filters.user(ADMIN_ID) & filters.reply)
 async def admin_broadcast(client, message):
     users = list(users_col.find({}))
-    await message.reply_text(f"🚀 Broadcast started for {len(users)} users...")
-    success = 0
+    await message.reply_text(f"🚀 Broadcasting to {len(users)} users...")
     for user in users:
-        try:
-            await message.reply_to_message.copy(user["user_id"])
-            success += 1
-            await asyncio.sleep(0.5) 
+        try: await message.reply_to_message.copy(user["user_id"])
         except: pass
-    await message.reply_text(f"✅ **Broadcast Complete!**\nSuccessfully sent to {success} out of {len(users)} users.")
+    await message.reply_text("✅ Broadcast Complete!")
     raise StopPropagation
 
 # ==========================================
-# 3. 📁 AUTO-SAVE (Clean Name + No Links/Captions)
+# 📁 SAVE MOVIE (FIXED CAPTION + NO PROMO LINKS)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
     media = message.document or message.video
-    if not media:
-        await message.reply_text("❌ Kripya valid document ya video bhejein.")
-        raise StopPropagation
-
+    if not media: return
     exact_file_name = getattr(media, "file_name", None) or "movie_file.mp4"
     
-    # UnderScores aur Dots ko Space me badal kar Clean Name banana
-    base_name = os.path.splitext(exact_file_name)[0]
-    clean_movie_name = base_name.lower().replace("_", " ").replace(".", " ")
-    clean_movie_name = re.sub(r'\s+', ' ', clean_movie_name).strip()
-    search_keyword = clean_movie_name
-    
-    try:
-        # file_id se bhejne par dusre channel ka koi bhi link ya caption copy nahi hoga (Blank Caption)
-        if message.document:
-            copied_msg = await client.send_document(chat_id=DB_CHANNEL_ID, document=media.file_id, caption="")
-        elif message.video:
-            copied_msg = await client.send_video(chat_id=DB_CHANNEL_ID, video=media.file_id, caption="")
-    except Exception as e:
-        await message.reply_text(f"❌ Error: Bot ko Database channel mein admin banayein. ({e})")
-        raise StopPropagation
+    # 🛠️ CLEAN NAME & DB TAGS
+    clean_movie_name = re.sub(r'\s+', ' ', os.path.splitext(exact_file_name)[0].lower().replace("_", " ").replace(".", " ")).strip()
+    q_tags, l_tags, s_tags, e_tags = [], [], [], []
+    for q in ["480p", "720p", "1080p", "4k"]: 
+        if q in clean_movie_name: q_tags.append(q)
+    for l in ["hindi", "english", "dual audio"]: 
+        if l in clean_movie_name.replace("dual", "dual audio"): l_tags.append(l)
+    for match in re.findall(r'\bs(\d+)|\bseason\s*(\d+)', clean_movie_name): 
+        s_tags.append(f"S{(match[0] or match[1]).zfill(2)}") 
+    for ep in re.findall(r'\[?[eE]p?(?:isode)?\s*(\d+(?:\s*-\s*\d+)?)\]?', clean_movie_name):
+        e_tags.append(f"E{ep.replace(' ', '')}")
 
-    quality_tags, lang_tags, season_tags, episode_tags = [], [], [], []
-    if "480p" in search_keyword: quality_tags.append("480p")
-    if "720p" in search_keyword: quality_tags.append("720p")
-    if "1080p" in search_keyword: quality_tags.append("1080p")
-    if "4k" in search_keyword or "2160p" in search_keyword: quality_tags.append("4k")
-    if "hindi" in search_keyword or "hin" in search_keyword: lang_tags.append("hindi")
-    if "english" in search_keyword or "eng" in search_keyword: lang_tags.append("english")
-    if "dual" in search_keyword: lang_tags.append("dual audio")
-        
-    for match in re.findall(r'\bs(\d+)|\bseason\s*(\d+)', search_keyword):
-        season_tags.append(f"S{(match[0] or match[1]).zfill(2)}") 
-    for ep in re.findall(r'\[?[eE]p?(?:isode)?\s*(\d+(?:\s*-\s*\d+)?)\]?', search_keyword):
-        ep_clean = ep.replace(" ", "")
-        episode_tags.append(f"E{ep_clean}" if '-' in ep_clean else f"E{ep_clean.zfill(2)}") 
-    
+    try:
+        # 🔥 FIX: Send file using file_id to strip promo links, but KEEP the filename as caption for searching!
+        clean_caption = f"`{exact_file_name}`"
+        if message.document: copied_msg = await client.send_document(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
+        else: copied_msg = await client.send_video(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
+    except: return await message.reply_text("❌ Error in DB Channel.")
+
     movies_col.insert_one({
-        "movie_name": search_keyword, "file_name": exact_file_name, "message_id": copied_msg.id,
-        "quality": quality_tags, "language": lang_tags, "season": list(set(season_tags)), "episode": list(set(episode_tags))
+        "movie_name": clean_movie_name, "file_name": exact_file_name, "message_id": copied_msg.id,
+        "quality": q_tags, "language": l_tags, "season": list(set(s_tags)), "episode": list(set(e_tags))
     })
-    await message.reply_text(f"✅ **Bina Link/Caption ke Clean Save ho gayi!**\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Saved!**\n📁 `{exact_file_name}`")
     raise StopPropagation
 
 # ==========================================
-# 4. 🔍 USER SEARCH (Anti-Spam + Filters Fixed)
+# 🔍 USER SEARCH (CLEAN & FAST)
 # ==========================================
-@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "trending", "addvip", "rmvip", "ai", "watchlist", "profile", "request", "setmenu"]))
+@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "watchlist", "request"]))
 async def search_movie(client, message):
-    user_id = message.from_user.id
-    
-    if message.forward_date or message.forward_from: return
-    if len(message.text) > 40: 
-        await message.reply_text("❌ Kripya sirf movie ka chhota naam likhein (Max 40 letters).")
-        return
-        
-    is_vip = vip_col.find_one({"user_id": user_id})
-    if banned_col.find_one({"user_id": user_id}): return 
-        
-    if user_id != ADMIN_ID and not is_vip:
-        curr_time = time.time()
-        SPAM_TRACKER[user_id] = [t for t in SPAM_TRACKER.get(user_id, []) if curr_time - t < 5]
-        if len(SPAM_TRACKER[user_id]) >= 5:
-            banned_col.insert_one({"user_id": user_id})
-            await message.reply_text("🚫 **BANNED!** Aapne spam kiya hai. Ab aap bot ka use nahi kar sakte.")
-            raise StopPropagation
-        elif len(SPAM_TRACKER[user_id]) >= 3:
-            SPAM_TRACKER[user_id].append(curr_time)
-            await message.reply_text("⚠️ **WARNING:** Dheere type karein! Spam mat karein.")
-            raise StopPropagation
-        else: SPAM_TRACKER[user_id].append(curr_time)
-
-    save_user(user_id, message.from_user.first_name)
     if not await ensure_fsub(client, message): raise StopPropagation
-
-    search_query = message.text.lower().strip()
-    safe_query = re.escape(search_query)
-    
-    users_col.update_one({"user_id": user_id}, {"$inc": {"searches": 1}})
-    movies = list(movies_col.find({"movie_name": {"$regex": safe_query}}).limit(50))
+    sq = re.escape(message.text.lower().strip())
+    movies = list(movies_col.find({"movie_name": {"$regex": sq}}).limit(30))
     
     if not movies:
         all_names = movies_col.distinct("movie_name")
-        close_matches = difflib.get_close_matches(search_query, all_names, n=3, cutoff=0.5)
-        
-        if close_matches:
-            sugg = "\n".join([f"👉 `{m.title()}`" for m in close_matches])
-            await message.reply_text(f"❌ **Nahi mila.**\n💡 **Kya aapka matlab inse tha?**\n{sugg}\n\n📝 Request karne ke liye type karein:\n`/request {search_query}`")
-        else:
-            await message.reply_text(f"❌ **Sorry, '{search_query[:20]}' available nahi hai.**\n\n📝 Request karne ke liye type karein:\n`/request {search_query}`")
-        raise StopPropagation
-        
-    trending_col.update_one({"query": search_query}, {"$inc": {"count": 1}}, upsert=True)
-    
-    await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
-    imdb_data = await get_imdb_info(search_query)
-    
-    if imdb_data:
-        text = f"👋 **Hᴇʏ, {message.from_user.first_name}** ❞\n\n🎬 **{imdb_data.get('Title', '')} ({imdb_data.get('Year', '')})**\n⭐ IMDb: {imdb_data.get('imdbRating', 'N/A')}/10\n📖 {imdb_data.get('Plot', '')}\n\n📁 **Files Found:**"
-    else:
-        text = f"👋 **Hᴇʏ, {message.from_user.first_name}** ❞\n\n📁 **Files Found For -** `{message.text}`."
-    
-    cb_sq = search_query[:20] 
-    
-    buttons = [
-        [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{cb_sq}")],
-        [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{cb_sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{cb_sq}")]
-    ]
-    
-    yt_query = search_query.replace(" ", "+") + "+trailer"
-    buttons.append([InlineKeyboardButton("🎞️ Watch Trailer", url=f"https://www.youtube.com/results?search_query={yt_query}")])
+        close = difflib.get_close_matches(message.text.lower(), all_names, n=2, cutoff=0.5)
+        sugg = "\n".join([f"👉 `{m.title()}`" for m in close]) if close else "No similar movies."
+        return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
 
-    if len(movies) > 1: buttons.append([InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ Fɪʟᴇs 📥", callback_data=f"sendall_{cb_sq}")])
-    
-    for movie in movies:
-        mid = str(movie["_id"])
-        buttons.append([InlineKeyboardButton(f"📁 {movie.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-        buttons.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
+    cb_sq = message.text.lower().strip()[:20]
+    btns = [
+        [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{cb_sq}")],
+        [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{cb_sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{cb_sq}")],
+        [InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{cb_sq}")]
+    ]
+    for m in movies:
+        mid = str(m["_id"])
+        btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
+        btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
         
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=InlineKeyboardMarkup(btns))
     raise StopPropagation
 
-async def auto_delete_task(client, chat_id, message_ids):
-    await asyncio.sleep(600) 
-    try: await client.delete_messages(chat_id, message_ids)
+async def auto_del(client, chat_id, ids):
+    await asyncio.sleep(600)
+    try: await client.delete_messages(chat_id, ids)
     except: pass
 
 @app.on_callback_query()
-async def button_click(client, query):
+async def callbacks(client, query):
     data = query.data
-
     if data.startswith("reqdone_"):
         if query.from_user.id != ADMIN_ID: return
-        target_user = int(data.split("_")[1])
-        msg_text = query.message.text
-        movie_name = "Requested Movie"
-        for line in msg_text.split('\n'):
-            if line.startswith("🎬 **Movie:**"):
-                movie_name = line.split("`")[1]
-
         try:
-            await client.send_message(target_user, f"🎉 **GOOD NEWS!**\nAapki request ki gayi movie **'{movie_name}'** upload ho chuki hai.\n\nAb aap aaram se bot me naam likhkar search kar sakte hain!")
-            await query.message.edit_text(f"✅ **Request Fulfilled!**\nUser ko notification bhej diya gaya hai.\n\n{msg_text}")
-        except:
-            await query.answer("❌ User ne bot block kar diya hai.", show_alert=True)
-            await query.message.edit_text(f"❌ **User Blocked Bot**\n\n{msg_text}")
-        return
-
-    if data == "verify_fsub":
-        is_joined = await check_fsub(client, query.from_user.id)
-        if is_joined:
-            await query.answer("✅ Verification Successful! Ab aap movie search kar sakte hain.", show_alert=True)
-            try: await query.message.delete()
-            except: pass
-        else:
-            await query.answer("❌ Aapne abhi tak channel join nahi kiya hai. Pehle join karein!", show_alert=True)
-        return
-
-    if data.startswith("wladd_"):
-        mid = data.split("_")[1]
-        watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": mid}}, upsert=True)
-        await query.answer("📌 Watchlist me save ho gayi!", show_alert=True)
-        return
-
-    # 🛠️ FULLY FIXED FILTER SYSTEM (Mapped Correctly with Database)
-    if data.startswith("filter_quality_"):
-        sq = data.split("_", 2)[2]
-        btns = [
-            [InlineKeyboardButton("480p", callback_data=f"apply_quality_480p_{sq}"), InlineKeyboardButton("720p", callback_data=f"apply_quality_720p_{sq}")],
-            [InlineKeyboardButton("1080p", callback_data=f"apply_quality_1080p_{sq}"), InlineKeyboardButton("4K", callback_data=f"apply_quality_4k_{sq}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]
-        ]
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
-        except MessageNotModified: pass
+            await client.send_message(int(data.split("_")[1]), "🎉 **Movie Uploaded!** Search now.")
+            await query.message.edit_text("✅ Notified user!")
+        except: await query.answer("Failed to notify", show_alert=True)
         
-    elif data.startswith("filter_language_"):
-        sq = data.split("_", 2)[2]
-        btns = [
-            [InlineKeyboardButton("Hindi", callback_data=f"apply_language_hindi_{sq}"), InlineKeyboardButton("English", callback_data=f"apply_language_english_{sq}")],
-            [InlineKeyboardButton("Dual Audio", callback_data=f"apply_language_dual audio_{sq}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]
-        ]
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
-        except MessageNotModified: pass
+    elif data == "verify_fsub":
+        if await check_fsub(client, query.from_user.id):
+            await query.answer("✅ Verified!", show_alert=True)
+            await query.message.delete()
+        else: await query.answer("❌ Pehle join karein!", show_alert=True)
         
-    elif data.startswith("filter_season_"):
-        sq = data.split("_", 2)[2]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(50))
-        seasons = sorted(list({s for m in movies if "season" in m for s in m.get("season", [])}))
-        if not seasons: return await query.answer("❌ Season filter nahi mila!", show_alert=True)
-        btns = [[InlineKeyboardButton(s, callback_data=f"apply_season_{s}_{sq}")] for s in seasons]
-        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
-        except MessageNotModified: pass
-        
-    elif data.startswith("filter_episode_"):
-        sq = data.split("_", 2)[2]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(50))
-        episodes = sorted(list({e for m in movies if "episode" in m for e in m.get("episode", [])}))
-        if not episodes: return await query.answer("❌ Episode filter nahi mila!", show_alert=True)
-        btns = [[InlineKeyboardButton(e, callback_data=f"apply_episode_{e}_{sq}")] for e in episodes]
-        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
-        except MessageNotModified: pass
-        
-    elif data.startswith("apply_"):
-        parts = data.split("_", 3)
-        # parts: [0]="apply", [1]="quality"/"language"/"season"/"episode", [2]=value, [3]=search_query
-        field, value, sq = parts[1], parts[2], parts[3]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}, field: value}).limit(50))
-        if not movies: return await query.answer("❌ File nahi mili!", show_alert=True)
-        buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]]
-        for m in movies:
-            mid = str(m["_id"])
-            buttons.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-            buttons.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
-        except MessageNotModified: pass
-        
-    elif data.startswith("back_"):
-        sq = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(50))
-        buttons = [
-            [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{sq}")],
-            [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{sq}")]
-        ]
-        yt_query = sq.replace(" ", "+") + "+trailer"
-        buttons.append([InlineKeyboardButton("🎞️ Watch Trailer", url=f"https://www.youtube.com/results?search_query={yt_query}")])
-
-        if len(movies) > 1: buttons.append([InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ Fɪʟᴇs 📥", callback_data=f"sendall_{sq}")])
-        for m in movies:
-            mid = str(m["_id"])
-            buttons.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-            buttons.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
-        except MessageNotModified: pass
+    elif data.startswith("wladd_"):
+        watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": data.split("_")[1]}}, upsert=True)
+        await query.answer("📌 Saved to Watchlist!")
 
     elif data.startswith("get_"):
-        mid = data.split("_")[1]
-        movie = movies_col.find_one({"_id": ObjectId(mid)})
+        movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
-            await query.answer("Sending File... 📤", show_alert=False)
-            try:
-                msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=movie["message_id"])
-                if not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
-                    w_msg = await query.message.reply_text("⚠️ **Note:** Yeh file 10 minute mein auto-delete ho jayegi!")
-                    asyncio.create_task(auto_delete_task(client, query.message.chat.id, [msg.id, w_msg.id]))
-            except Exception: 
-                await query.message.reply_text("❌ Error: Channel se file fetch nahi ho payi.")
-        else: await query.answer("Yeh purani file hai!", show_alert=True)
-            
+            msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"])
+            if not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
+                w_msg = await query.message.reply_text("⚠️ Yeh file 10 min mein delete ho jayegi.")
+                asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
+        await query.answer()
+
     elif data.startswith("sendall_"):
-        sq = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(50))
-        await query.answer(f"Sending {len(movies)} files... 📤", show_alert=False)
-        sent_ids = []
+        sq = re.escape(data.split("_", 1)[1])
+        movies = list(movies_col.find({"movie_name": {"$regex": sq}}).limit(30))
+        sent = []
         for m in movies:
             if "message_id" in m:
-                try:
-                    msg = await client.copy_message(chat_id=query.message.chat.id, from_chat_id=DB_CHANNEL_ID, message_id=m["message_id"])
-                    sent_ids.append(msg.id)
-                    await asyncio.sleep(0.5) 
-                except: continue
-        if sent_ids and not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
-            w_msg = await query.message.reply_text("⚠️ **Note:** Yeh sabhi files 10 minute mein auto-delete ho jayegi!")
-            sent_ids.append(w_msg.id)
-            asyncio.create_task(auto_delete_task(client, query.message.chat.id, sent_ids))
+                msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"])
+                sent.append(msg.id)
+                await asyncio.sleep(0.3)
+        if sent and not vip_col.find_one({"user_id": query.from_user.id}) and query.from_user.id != ADMIN_ID:
+            w_msg = await query.message.reply_text("⚠️ Yeh sabhi files 10 min mein delete ho jayengi.")
+            sent.append(w_msg.id)
+            asyncio.create_task(auto_del(client, query.message.chat.id, sent))
+        await query.answer()
+
+    # 🛠️ FILTERS
+    elif data.startswith("filter_"):
+        ftype, sq = data.split("_")[1], data.split("_", 2)[2]
+        btns = []
+        if ftype == "quality": btns = [[InlineKeyboardButton(q, callback_data=f"app_quality_{q}_{sq}")] for q in ["480p", "720p", "1080p", "4k"]]
+        elif ftype == "language": btns = [[InlineKeyboardButton(l.title(), callback_data=f"app_language_{l}_{sq}")] for l in ["hindi", "english", "dual audio"]]
+        else:
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(30))
+            items = sorted(list({i for m in movies for i in m.get(ftype, [])}))
+            if not items: return await query.answer(f"No {ftype} found!", show_alert=True)
+            btns = [[InlineKeyboardButton(i, callback_data=f"app_{ftype}_{i}_{sq}")] for i in items]
+        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
+        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+
+    elif data.startswith("app_"):
+        parts = data.split("_", 3)
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(parts[3])}, parts[1]: parts[2]}).limit(30))
+        if not movies: return await query.answer("❌ File nahi mili!", show_alert=True)
+        btns = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{parts[3]}")]]
+        for m in movies:
+            mid = str(m["_id"])
+            btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
+        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+
+    elif data.startswith("back_"):
+        sq = data.split("_", 1)[1]
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq)}}).limit(30))
+        btns = [
+            [InlineKeyboardButton("✨ PIXEL", callback_data=f"filter_quality_{sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"filter_language_{sq}")],
+            [InlineKeyboardButton("🎬 SEASON", callback_data=f"filter_season_{sq}"), InlineKeyboardButton("📺 EPISODE", callback_data=f"filter_episode_{sq}")],
+            [InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{sq}")]
+        ]
+        for m in movies:
+            mid = str(m["_id"])
+            btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
+            btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
+        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
 
 # ==========================================
-# 🚀 RENDER PORT KEEPER + STABLE BOT RUNNER
+# 🚀 RENDER 24/7 PORT KEEPER
 # ==========================================
 def run_port_server():
-    port = int(os.environ.get("PORT", 10000))
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
-        print(f"Serving port keeper on port {port}")
+    with socketserver.TCPServer(("0.0.0.0", int(os.environ.get("PORT", 10000))), http.server.SimpleHTTPRequestHandler) as httpd:
         httpd.serve_forever()
 
 if __name__ == "__main__":
-    port_thread = threading.Thread(target=run_port_server, daemon=True)
-    port_thread.start()
-    
-    print("🚀 CLASSIC STABLE MOVIE BOT IS RUNNING WITH ALL FEATURES...")
+    threading.Thread(target=run_port_server, daemon=True).start()
     app.run()
