@@ -1,4 +1,5 @@
 import re
+import math
 import asyncio
 import threading
 import os
@@ -23,6 +24,8 @@ DB_CHANNEL_ID = -1004448866853
 FSUB_CHANNEL_ID = -1004442475534 
 FSUB_CHANNEL_LINK = "https://t.me/+KAQT3ciLAfExMTY1" 
 START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg" 
+
+PAGE_SIZE = 5  # Ek page par kitni files dikhani hain
 
 mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = mongo_client["MovieBot"]
@@ -137,18 +140,12 @@ async def save_movie_to_db(client, message):
     for q in ["480p", "720p", "1080p", "4k"]: 
         if q in clean_movie_name: q_tags.append(q)
     
-    # 🗣️ Language Smart Match (Hindi, HIN, DUAL, Multi etc.)
-    if any(x in clean_movie_name for x in ["hindi", "hin"]):
-        l_tags.append("hindi")
-    if any(x in clean_movie_name for x in ["english", "eng"]):
-        l_tags.append("english")
-    if any(x in clean_movie_name for x in ["dual", "hin-tel", "hin-tam", "multi"]):
-        l_tags.append("dual audio")
+    if any(x in clean_movie_name for x in ["hindi", "hin"]): l_tags.append("hindi")
+    if any(x in clean_movie_name for x in ["english", "eng"]): l_tags.append("english")
+    if any(x in clean_movie_name for x in ["dual", "hin-tel", "hin-tam", "multi"]): l_tags.append("dual audio")
     
-    # 🎬 Smart Season Match (S01, S1, Season 1 etc.)
     season_matches = re.findall(r'\b(?:s|season)\s*0*(\d+)\b', clean_movie_name)
-    for s_num in season_matches:
-        s_tags.append(f"S{s_num.zfill(2)}")
+    for s_num in season_matches: s_tags.append(f"S{s_num.zfill(2)}")
         
     for match in re.findall(r'\be(\d+)\b|\bepisode\s*(\d+)\b', clean_movie_name):
         e_tags.append(f"E{str(match[0] or match[1]).zfill(2)}")
@@ -167,27 +164,24 @@ async def save_movie_to_db(client, message):
     raise StopPropagation
 
 # ==========================================
-# 🔍 USER SEARCH (DYNAMIC BUTTONS)
+# 📑 HELPER: BUILD PAGINATED BUTTONS
 # ==========================================
-@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "watchlist", "request", "setmenu"]))
-async def search_movie(client, message):
-    if not await ensure_fsub(client, message): raise StopPropagation
+def build_search_markup(movies, query_str, page=0):
+    total_files = len(movies)
+    total_pages = math.ceil(total_files / PAGE_SIZE) if total_files > 0 else 1
+    page = max(0, min(page, total_pages - 1))
     
-    sq = re.escape(message.text.lower().strip())
-    movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
+    cb_sq = query_str[:12]
+    btns = []
     
-    if not movies:
-        all_names = movies_col.distinct("movie_name")
-        close = difflib.get_close_matches(message.text.lower(), all_names, n=2, cutoff=0.5)
-        sugg = "\n".join([f"👉 `{m.title()}`" for m in close]) if close else "No similar movies."
-        return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
-
-    cb_sq = message.text.lower().strip()[:15] 
+    # Top Filters
     has_season = any(m.get("season") for m in movies)
     has_episode = any(m.get("episode") for m in movies)
-
-    btns = [[InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{cb_sq}")]]
     
+    btns.append([
+        InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{cb_sq}"),
+        InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{cb_sq}")
+    ])
     if has_season or has_episode:
         row = []
         if has_season: row.append(InlineKeyboardButton("🎬 SEASON", callback_data=f"flt_s_{cb_sq}"))
@@ -195,17 +189,49 @@ async def search_movie(client, message):
         btns.append(row)
 
     btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{cb_sq}")])
-    for m in movies:
+
+    # Paginated files slice
+    start_idx = page * PAGE_SIZE
+    page_movies = movies[start_idx : start_idx + PAGE_SIZE]
+    for m in page_movies:
         mid = str(m["_id"])
         btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
         btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
-        
-    await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=InlineKeyboardMarkup(btns))
+
+    # ⋞ BACK | 1 / 4 | NEXT ⋟ Pagination Row
+    if total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⋞ BACK", callback_data=f"page_{page - 1}_{cb_sq}"))
+        nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("NEXT ⋟", callback_data=f"page_{page + 1}_{cb_sq}"))
+        btns.append(nav_row)
+
+    return InlineKeyboardMarkup(btns)
+
+# ==========================================
+# 🔍 USER SEARCH (WITH PAGINATION)
+# ==========================================
+@app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "watchlist", "request", "setmenu"]))
+async def search_movie(client, message):
+    if not await ensure_fsub(client, message): raise StopPropagation
+    
+    sq = re.escape(message.text.lower().strip())
+    movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(100))
+    
+    if not movies:
+        all_names = movies_col.distinct("movie_name")
+        close = difflib.get_close_matches(message.text.lower(), all_names, n=2, cutoff=0.5)
+        sugg = "\n".join([f"👉 `{m.title()}`" for m in close]) if close else "No similar movies."
+        return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
+
+    markup = build_search_markup(movies, message.text.lower().strip(), page=0)
+    await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=markup)
     raise StopPropagation
 
-# ⏱️ 10 MINUTES AUTO DELETE HANDLER
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)  # 600 Seconds = 10 Minutes
+    await asyncio.sleep(600)  # 10 Minutes
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
@@ -213,7 +239,22 @@ async def auto_del(client, chat_id, ids):
 async def callbacks(client, query):
     data = query.data
     
-    if data.startswith("reqdone_"):
+    if data == "noop":
+        return await query.answer()
+
+    # 📑 SLIDE / PAGINATION HANDLER
+    elif data.startswith("page_"):
+        parts = data.split("_", 2)
+        target_page = int(parts[1])
+        sq = parts[2]
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(100))
+        if not movies: return await query.answer("No files found!")
+        markup = build_search_markup(movies, sq, page=target_page)
+        try: await query.message.edit_reply_markup(markup)
+        except MessageNotModified: pass
+        await query.answer()
+
+    elif data.startswith("reqdone_"):
         if query.from_user.id != ADMIN_ID: return
         try:
             await client.send_message(int(data.split("_")[1]), "🎉 **Movie Uploaded!** Bot me search karein.")
@@ -319,23 +360,9 @@ async def callbacks(client, query):
 
     elif data.startswith("back_"):
         sq = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(30))
-        has_season = any(m.get("season") for m in movies)
-        has_episode = any(m.get("episode") for m in movies)
-
-        btns = [[InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{sq}")]]
-        if has_season or has_episode:
-            row = []
-            if has_season: row.append(InlineKeyboardButton("🎬 SEASON", callback_data=f"flt_s_{sq}"))
-            if has_episode: row.append(InlineKeyboardButton("📺 EPISODE", callback_data=f"flt_e_{sq}"))
-            btns.append(row)
-
-        btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{sq}")])
-        for m in movies:
-            mid = str(m["_id"])
-            btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-            btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
-        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(100))
+        markup = build_search_markup(movies, sq, page=0)
+        try: await query.message.edit_reply_markup(markup)
         except MessageNotModified: pass
 
 # ==========================================
