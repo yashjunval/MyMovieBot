@@ -15,7 +15,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. 🚀 CREDENTIALS & DB SETUP
 # ==========================================
-BOT_TOKEN = "8600027374:AAHnvRTIYtuN5iRSjFwvT8-OgD5iCvDxpSc" 
+BOT_TOKEN = "8600027374:AAFjSg_NeOf53zl5XTE94h8ceK0kOgwaABw" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
@@ -25,7 +25,8 @@ FSUB_CHANNEL_ID = -1004442475534
 FSUB_CHANNEL_LINK = "https://t.me/+KAQT3ciLAfExMTY1" 
 START_PIC = "https://telegra.ph/file/a7cc9bb4cf0d6c8e3cc50.jpg" 
 
-PAGE_SIZE = 5  # Ek page par kitni files dikhani hain
+BOT_USERNAME = "@Movie18202026_bot"
+PAGE_SIZE = 5
 
 mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = mongo_client["MovieBot"]
@@ -151,16 +152,16 @@ async def save_movie_to_db(client, message):
         e_tags.append(f"E{str(match[0] or match[1]).zfill(2)}")
 
     try:
-        clean_caption = f"`{exact_file_name}`"
-        if message.document: copied_msg = await client.send_document(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
-        else: copied_msg = await client.send_video(DB_CHANNEL_ID, media.file_id, caption=clean_caption)
+        branded_caption = f"📁 `{exact_file_name}`\n\n⚡ **Powered By :** {BOT_USERNAME}"
+        if message.document: copied_msg = await client.send_document(DB_CHANNEL_ID, media.file_id, caption=branded_caption)
+        else: copied_msg = await client.send_video(DB_CHANNEL_ID, media.file_id, caption=branded_caption)
     except: return await message.reply_text("❌ Error in DB Channel.")
 
     movies_col.insert_one({
         "movie_name": clean_movie_name, "file_name": exact_file_name, "message_id": copied_msg.id,
         "quality": q_tags, "language": l_tags, "season": list(set(s_tags)), "episode": list(set(e_tags))
     })
-    await message.reply_text(f"✅ **Saved!**\n📁 `{exact_file_name}`")
+    await message.reply_text(f"✅ **Saved!**\n📁 `{exact_file_name}`\n⚡ Powered by {BOT_USERNAME}")
     raise StopPropagation
 
 # ==========================================
@@ -174,7 +175,6 @@ def build_search_markup(movies, query_str, page=0):
     cb_sq = query_str[:12]
     btns = []
     
-    # Top Filters
     has_season = any(m.get("season") for m in movies)
     has_episode = any(m.get("episode") for m in movies)
     
@@ -190,7 +190,6 @@ def build_search_markup(movies, query_str, page=0):
 
     btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{cb_sq}")])
 
-    # Paginated files slice
     start_idx = page * PAGE_SIZE
     page_movies = movies[start_idx : start_idx + PAGE_SIZE]
     for m in page_movies:
@@ -198,7 +197,6 @@ def build_search_markup(movies, query_str, page=0):
         btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
         btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
 
-    # ⋞ BACK | 1 / 4 | NEXT ⋟ Pagination Row
     if total_pages > 1:
         nav_row = []
         if page > 0:
@@ -231,7 +229,7 @@ async def search_movie(client, message):
     raise StopPropagation
 
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)  # 10 Minutes
+    await asyncio.sleep(600)
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
@@ -242,7 +240,6 @@ async def callbacks(client, query):
     if data == "noop":
         return await query.answer()
 
-    # 📑 SLIDE / PAGINATION HANDLER
     elif data.startswith("page_"):
         parts = data.split("_", 2)
         target_page = int(parts[1])
@@ -271,11 +268,12 @@ async def callbacks(client, query):
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": data.split("_")[1]}}, upsert=True)
         await query.answer("📌 Saved to Watchlist!")
 
-    # 📥 GET SINGLE FILE (WITH 10-MIN AUTO DELETE & FORWARD WARNING)
+    # 📥 GET SINGLE FILE (WITH BRANDED CAPTION & 10-MIN AUTO DELETE)
     elif data.startswith("get_"):
         movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
-            msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"])
+            caption_text = f"📁 `{movie.get('file_name', 'Movie File')}`\n\n⚡ **Powered By :** {BOT_USERNAME}"
+            msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"], caption=caption_text)
             warning_text = (
                 "⚠️ **IMPORTANT NOTICE:**\n\n"
                 "Yeh file agle **10 minutes** mein yahan se auto-delete ho jayegi!\n\n"
@@ -285,14 +283,15 @@ async def callbacks(client, query):
             asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
-    # 📥 GET ALL FILES (WITH 10-MIN AUTO DELETE & FORWARD WARNING)
+    # 📥 GET ALL FILES (WITH BRANDED CAPTION & 10-MIN AUTO DELETE)
     elif data.startswith("sendall_"):
         sq = re.escape(data.split("_", 1)[1])
         movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
         sent = []
         for m in movies:
             if "message_id" in m:
-                msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"])
+                caption_text = f"📁 `{m.get('file_name', 'Movie File')}`\n\n⚡ **Powered By :** {BOT_USERNAME}"
+                msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"], caption=caption_text)
                 sent.append(msg.id)
                 await asyncio.sleep(0.3)
         if sent:
@@ -339,7 +338,7 @@ async def callbacks(client, query):
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         except MessageNotModified: pass
 
-    # 🎯 APPLY FILTER & DISPLAY FILES
+    # 🎯 APPLY FILTER & DISPLAY FILES (FIXED)
     elif data.startswith("app_"):
         parts = data.split("_", 3)
         field, val, sq = parts[1], parts[2], parts[3]
