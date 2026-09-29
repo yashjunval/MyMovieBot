@@ -12,9 +12,9 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. 🚀 CREDENTIALS 
+# 1. 🚀 CREDENTIALS (NAYA TOKEN YAHAN DALEIN)
 # ==========================================
-BOT_TOKEN = "8600027374:AAFjSg_NeOf53zl5XTE94h8ceK0kOgwaABw" 
+BOT_TOKEN = "YAHAN_APNA_NAYA_TOKEN_DALEIN" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
@@ -47,7 +47,7 @@ async def ensure_fsub(client, message):
     return False
 
 # ==========================================
-# 🛠️ SET MENU (RUN THIS ONCE TO CLEAR OLD MENUS)
+# 🛠️ SET MENU 
 # ==========================================
 @app.on_message(filters.command("setmenu") & filters.private & filters.user(ADMIN_ID))
 async def set_bot_menus(client, message):
@@ -57,10 +57,9 @@ async def set_bot_menus(client, message):
         BotCommand("watchlist", "📌 My Saved Movies")
     ]
     await client.set_bot_commands(cmds, scope=BotCommandScopeDefault())
-    
     admin_cmds = cmds + [BotCommand("stats", "📊 Stats"), BotCommand("broadcast", "📢 Broadcast"), BotCommand("setmenu", "🛠️ Set Menu")]
     await client.set_bot_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
-    await message.reply_text("✅ **Fresh Menu Set! Purane faltu commands delete ho gaye.**")
+    await message.reply_text("✅ **Fresh Menu Set!**")
     raise StopPropagation
 
 # ==========================================
@@ -85,7 +84,6 @@ async def request_movie(client, message):
     req_movie = message.text.split(" ", 1)[1][:50]
     btn = [[InlineKeyboardButton("✅ Mark as Uploaded", callback_data=f"reqdone_{message.from_user.id}")]]
     admin_text = f"📩 **NEW REQUEST**\n👤 {message.from_user.first_name} (`{message.from_user.id}`)\n🎬 `{req_movie}`"
-    
     try:
         await client.send_message(ADMIN_ID, admin_text, reply_markup=InlineKeyboardMarkup(btn))
         await message.reply_text("✅ Aapki request admin ko bhej di gayi hai!")
@@ -122,7 +120,7 @@ async def admin_broadcast(client, message):
     raise StopPropagation
 
 # ==========================================
-# 📁 SAVE MOVIE (SMART TAGGING)
+# 📁 SAVE MOVIE (SMART TAGGING & CLEAN CAPTION)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
@@ -164,7 +162,6 @@ async def search_movie(client, message):
     if not await ensure_fsub(client, message): raise StopPropagation
     
     sq = re.escape(message.text.lower().strip())
-    # $options: 'i' ensures it matches regardless of upper/lower case
     movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
     
     if not movies:
@@ -174,13 +171,11 @@ async def search_movie(client, message):
         return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
 
     cb_sq = message.text.lower().strip()[:15] 
-    
     has_season = any(m.get("season") for m in movies)
     has_episode = any(m.get("episode") for m in movies)
 
     btns = [[InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{cb_sq}"), InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{cb_sq}")]]
     
-    # Season/Episode buttons sirf tab aayenge jab database me exist karte honge
     if has_season or has_episode:
         row = []
         if has_season: row.append(InlineKeyboardButton("🎬 SEASON", callback_data=f"flt_s_{cb_sq}"))
@@ -188,7 +183,6 @@ async def search_movie(client, message):
         btns.append(row)
 
     btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{cb_sq}")])
-    
     for m in movies:
         mid = str(m["_id"])
         btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
@@ -197,8 +191,9 @@ async def search_movie(client, message):
     await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=InlineKeyboardMarkup(btns))
     raise StopPropagation
 
+# ⏱️ 10-MIN AUTO DELETE FUNCTION
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)
+    await asyncio.sleep(600) # Wait for 10 minutes (600 seconds)
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
@@ -223,15 +218,17 @@ async def callbacks(client, query):
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": data.split("_")[1]}}, upsert=True)
         await query.answer("📌 Saved to Watchlist!")
 
+    # 📥 GET SINGLE FILE (WITH 10-MIN AUTO DELETE)
     elif data.startswith("get_"):
         movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
             msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"])
             if query.from_user.id != ADMIN_ID:
-                w_msg = await query.message.reply_text("⚠️ Yeh file 10 min mein delete ho jayegi.")
+                w_msg = await query.message.reply_text("⚠️ **Yeh file 10 minute mein auto-delete ho jayegi!**")
                 asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
+    # 📥 GET ALL FILES (WITH 10-MIN AUTO DELETE)
     elif data.startswith("sendall_"):
         sq = re.escape(data.split("_", 1)[1])
         movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
@@ -242,12 +239,12 @@ async def callbacks(client, query):
                 sent.append(msg.id)
                 await asyncio.sleep(0.3)
         if sent and query.from_user.id != ADMIN_ID:
-            w_msg = await query.message.reply_text("⚠️ Yeh sabhi files 10 min mein delete ho jayengi.")
+            w_msg = await query.message.reply_text("⚠️ **Yeh sabhi files 10 minute mein auto-delete ho jayengi!**")
             sent.append(w_msg.id)
             asyncio.create_task(auto_del(client, query.message.chat.id, sent))
         await query.answer()
 
-    # 🛠️ FIXED SHORT FILTERS
+    # 🛠️ FILTERS
     elif data.startswith("flt_"):
         ftype = data.split("_")[1]
         sq = data.split("_", 2)[2]
@@ -277,7 +274,6 @@ async def callbacks(client, query):
     elif data.startswith("back_"):
         sq = data.split("_", 1)[1]
         movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(30))
-        
         has_season = any(m.get("season") for m in movies)
         has_episode = any(m.get("episode") for m in movies)
 
