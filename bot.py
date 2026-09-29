@@ -14,7 +14,7 @@ from bson.objectid import ObjectId
 # ==========================================
 # 1. 🚀 CREDENTIALS & DB SETUP
 # ==========================================
-BOT_TOKEN = "8600027374:AAFjSg_NeOf53zl5XTE94h8ceK0kOgwaABw" 
+BOT_TOKEN = "8600027374:AAHnvRTIYtuN5iRSjFwvT8-OgD5iCvDxpSc" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
