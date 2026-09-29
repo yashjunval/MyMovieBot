@@ -194,7 +194,8 @@ def build_search_markup(movies, query_key, page=0):
         if has_episode: row.append(InlineKeyboardButton("📺 EPISODE", callback_data=f"flt_e_{query_key}"))
         btns.append(row)
 
-   btns.append([InlineKeyboardButton(f"📥 SEND PAGE {page + 1}", callback_data=f"sendpage_{page}_{query_key}")])
+    # Current Page Send Button (No indentation error)
+    btns.append([InlineKeyboardButton(f"📥 SEND PAGE {page + 1}", callback_data=f"sendpage_{page}_{query_key}")])
 
     start_idx = page * PAGE_SIZE
     page_movies = movies[start_idx : start_idx + PAGE_SIZE]
@@ -313,7 +314,7 @@ async def callbacks(client, query):
             asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
-   # 📥 SEND ONLY CURRENT PAGE FILES
+    # 📥 SEND ONLY CURRENT PAGE FILES
     elif data.startswith("sendpage_"):
         parts = data.split("_", 2)
         cur_page = int(parts[1])
