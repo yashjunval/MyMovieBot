@@ -203,8 +203,9 @@ async def search_movie(client, message):
     await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=InlineKeyboardMarkup(btns))
     raise StopPropagation
 
+# ⏱️ 10 MINUTES AUTO DELETE HANDLER
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)
+    await asyncio.sleep(600)  # 600 Seconds = 10 Minutes
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
@@ -229,17 +230,21 @@ async def callbacks(client, query):
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": data.split("_")[1]}}, upsert=True)
         await query.answer("📌 Saved to Watchlist!")
 
-    # 📥 GET SINGLE FILE (WITH 10-MIN AUTO DELETE)
+    # 📥 GET SINGLE FILE (WITH 10-MIN AUTO DELETE & FORWARD WARNING)
     elif data.startswith("get_"):
         movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
             msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, movie["message_id"])
-            if query.from_user.id != ADMIN_ID:
-                w_msg = await query.message.reply_text("⚠️ **Yeh file 10 minute mein auto-delete ho jayegi!**")
-                asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
+            warning_text = (
+                "⚠️ **IMPORTANT NOTICE:**\n\n"
+                "Yeh file agle **10 minutes** mein yahan se auto-delete ho jayegi!\n\n"
+                "📌 *Kripya is file ko delete hone se pehle apni **Saved Messages (Personal window)** par forward kar lein.*"
+            )
+            w_msg = await query.message.reply_text(warning_text)
+            asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
-    # 📥 GET ALL FILES (WITH 10-MIN AUTO DELETE)
+    # 📥 GET ALL FILES (WITH 10-MIN AUTO DELETE & FORWARD WARNING)
     elif data.startswith("sendall_"):
         sq = re.escape(data.split("_", 1)[1])
         movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
@@ -249,8 +254,13 @@ async def callbacks(client, query):
                 msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"])
                 sent.append(msg.id)
                 await asyncio.sleep(0.3)
-        if sent and query.from_user.id != ADMIN_ID:
-            w_msg = await query.message.reply_text("⚠️ **Yeh sabhi files 10 minute mein auto-delete ho jayengi!**")
+        if sent:
+            warning_text = (
+                "⚠️ **IMPORTANT NOTICE:**\n\n"
+                "Yeh sabhi files agle **10 minutes** mein auto-delete ho jayengi!\n\n"
+                "📌 *Kripya in files ko delete hone se pehle apni **Saved Messages (Personal window)** par forward kar lein.*"
+            )
+            w_msg = await query.message.reply_text(warning_text)
             sent.append(w_msg.id)
             asyncio.create_task(auto_del(client, query.message.chat.id, sent))
         await query.answer()
@@ -338,4 +348,3 @@ def run_port_server():
 if __name__ == "__main__":
     threading.Thread(target=run_port_server, daemon=True).start()
     app.run()
-    
