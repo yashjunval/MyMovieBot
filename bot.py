@@ -247,9 +247,12 @@ async def search_movie(client, message):
     raise StopPropagation
 
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600)
-    try: await client.delete_messages(chat_id, ids)
-    except: pass
+    await asyncio.sleep(600)  # 10 Minutes
+    for mid in ids:
+        try:
+            await client.delete_messages(chat_id, mid)
+        except Exception:
+            pass
 
 @app.on_callback_query()
 async def callbacks(client, query):
