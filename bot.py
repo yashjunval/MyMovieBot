@@ -194,7 +194,7 @@ def build_search_markup(movies, query_key, page=0):
         if has_episode: row.append(InlineKeyboardButton("📺 EPISODE", callback_data=f"flt_e_{query_key}"))
         btns.append(row)
 
-    btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{query_key}")])
+   btns.append([InlineKeyboardButton(f"📥 SEND PAGE {page + 1}", callback_data=f"sendpage_{page}_{query_key}")])
 
     start_idx = page * PAGE_SIZE
     page_movies = movies[start_idx : start_idx + PAGE_SIZE]
@@ -313,14 +313,20 @@ async def callbacks(client, query):
             asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
-    # 📥 GET ALL FILES
-    elif data.startswith("sendall_"):
-        query_key = data.split("_", 1)[1]
+   # 📥 SEND ONLY CURRENT PAGE FILES
+    elif data.startswith("sendpage_"):
+        parts = data.split("_", 2)
+        cur_page = int(parts[1])
+        query_key = parts[2]
+        
         cached = SEARCH_CACHE.get(query_key)
-        movies = cached["movies"] if cached else list(movies_col.find({}).limit(10))
+        all_movies = cached["movies"] if cached else list(movies_col.find({}).limit(10))
+        
+        start_idx = cur_page * PAGE_SIZE
+        page_movies = all_movies[start_idx : start_idx + PAGE_SIZE]
             
         sent = []
-        for m in movies:
+        for m in page_movies:
             if "message_id" in m:
                 caption_text = f"📁 `{m.get('file_name', 'Movie File')}`\n\n⚡ **Powered By :** {BOT_USERNAME}"
                 msg = await client.copy_message(query.message.chat.id, DB_CHANNEL_ID, m["message_id"], caption=caption_text)
