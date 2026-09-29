@@ -34,7 +34,6 @@ movies_col = db["Movies"]
 users_col = db["Users"] 
 watchlist_col = db["Watchlist"] 
 
-# Fast memory cache for pagination
 SEARCH_CACHE = {}
 
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
@@ -130,7 +129,7 @@ async def admin_broadcast(client, message):
     raise StopPropagation
 
 # ==========================================
-# 📁 SAVE MOVIE (SMART TAGGING & CLEAN CAPTION)
+# 📁 SAVE MOVIE (SMART TAGGING & ANTI-DUPLICATE)
 # ==========================================
 @app.on_message((filters.document | filters.video) & filters.private & filters.user(ADMIN_ID))
 async def save_movie_to_db(client, message):
@@ -138,6 +137,11 @@ async def save_movie_to_db(client, message):
     if not media: return
     exact_file_name = getattr(media, "file_name", None) or "movie_file.mp4"
     
+    # 🛡️ ANTI-DUPLICATE CHECK
+    if movies_col.find_one({"file_name": exact_file_name}):
+        await message.reply_text(f"⚠️ **Yeh file pehle se database me saved hai!**\n📁 `{exact_file_name}`")
+        raise StopPropagation
+
     clean_movie_name = re.sub(r'\s+', ' ', exact_file_name.lower().replace("_", " ").replace(".", " ")).strip()
     
     q_tags, l_tags, s_tags, e_tags = [], [], [], []
@@ -199,7 +203,7 @@ def build_search_markup(movies, query_key, page=0):
         btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
         btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
 
-    # Slide / Pagination Row (⋞ BACK | 1 / X | NEXT ⋟)
+    # Slide / Pagination Row (⋞ BACK | PAGE 1/X | NEXT ⋟)
     if total_pages > 1:
         nav_row = []
         if page > 0:
@@ -224,12 +228,10 @@ async def search_movie(client, message):
     if not words:
         words = [re.escape(raw_query)]
         
-    # Har word ka regex taaki saari related files match ho jayein
     regex_pattern = ".*".join(words[:4]) 
     movies = list(movies_col.find({"movie_name": {"$regex": regex_pattern, "$options": "i"}}).limit(100))
     
     if not movies:
-        # Fallback to direct search
         movies = list(movies_col.find({"movie_name": {"$regex": re.escape(raw_query), "$options": "i"}}).limit(100))
 
     if not movies:
@@ -238,7 +240,6 @@ async def search_movie(client, message):
         sugg = "\n".join([f"👉 `{m.title()}`" for m in close]) if close else "No similar movies."
         return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
 
-    # Cache store for instant pagination without MongoDB overhead
     query_key = f"{message.from_user.id}_{message.id}"
     SEARCH_CACHE[query_key] = {"movies": movies, "query": raw_query}
 
@@ -246,6 +247,7 @@ async def search_movie(client, message):
     await message.reply_text(f"📁 **Files for:** `{message.text}` (Total: {len(movies)})", reply_markup=markup)
     raise StopPropagation
 
+# ⏱️ AUTO DELETE FUNCTION
 async def auto_del(client, chat_id, ids):
     await asyncio.sleep(600)  # 10 Minutes
     for mid in ids:
@@ -261,7 +263,7 @@ async def callbacks(client, query):
     if data == "noop":
         return await query.answer()
 
-    # 📑 SLIDE / PAGINATION HANDLER (INSTANT CLICK)
+    # 📑 SLIDE / PAGINATION HANDLER
     elif data.startswith("page_"):
         parts = data.split("_", 2)
         target_page = int(parts[1])
@@ -271,8 +273,7 @@ async def callbacks(client, query):
         if cached:
             movies = cached["movies"]
         else:
-            # Fallback search
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(query_key.split('_')[0]), "$options": "i"}}).limit(100))
+            movies = list(movies_col.find({}).limit(100))
             
         if not movies: return await query.answer("No files found!")
         markup = build_search_markup(movies, query_key, page=target_page)
@@ -316,10 +317,7 @@ async def callbacks(client, query):
     elif data.startswith("sendall_"):
         query_key = data.split("_", 1)[1]
         cached = SEARCH_CACHE.get(query_key)
-        if cached:
-            movies = cached["movies"]
-        else:
-            movies = list(movies_col.find({}).limit(10))
+        movies = cached["movies"] if cached else list(movies_col.find({}).limit(10))
             
         sent = []
         for m in movies:
