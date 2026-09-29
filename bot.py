@@ -12,9 +12,9 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # ==========================================
-# 1. 🚀 CREDENTIALS (NAYA TOKEN YAHAN DALEIN)
+# 1. 🚀 CREDENTIALS & DB SETUP
 # ==========================================
-BOT_TOKEN = "YAHAN_APNA_NAYA_TOKEN_DALEIN" 
+BOT_TOKEN = "8600027374:AAFjSg_NeOf53zl5XTE94h8ceK0kOgwaABw" 
 ADMIN_ID = 6855375693
 API_ID = 33056032
 API_HASH = "4b04c50c2004752cee284a3f533a8dd3"
@@ -32,6 +32,9 @@ watchlist_col = db["Watchlist"]
 
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
+# ==========================================
+# ⚡ FORCE SUB LOGIC
+# ==========================================
 async def check_fsub(client, user_id):
     if not FSUB_CHANNEL_ID: return True 
     try:
@@ -47,7 +50,7 @@ async def ensure_fsub(client, message):
     return False
 
 # ==========================================
-# 🛠️ SET MENU 
+# 🛠️ SET MENU
 # ==========================================
 @app.on_message(filters.command("setmenu") & filters.private & filters.user(ADMIN_ID))
 async def set_bot_menus(client, message):
@@ -63,7 +66,7 @@ async def set_bot_menus(client, message):
     raise StopPropagation
 
 # ==========================================
-# 📩 BASIC COMMANDS 
+# 📩 BASIC COMMANDS & REQUEST
 # ==========================================
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
@@ -133,11 +136,20 @@ async def save_movie_to_db(client, message):
     q_tags, l_tags, s_tags, e_tags = [], [], [], []
     for q in ["480p", "720p", "1080p", "4k"]: 
         if q in clean_movie_name: q_tags.append(q)
-    for l in ["hindi", "english", "dual audio"]: 
-        if l in clean_movie_name.replace("dual", "dual audio"): l_tags.append(l)
     
-    for match in re.findall(r'\bs(\d+)\b|\bseason\s*(\d+)\b', clean_movie_name): 
-        s_tags.append(f"S{str(match[0] or match[1]).zfill(2)}") 
+    # 🗣️ Language Smart Match (Hindi, HIN, DUAL, Multi etc.)
+    if any(x in clean_movie_name for x in ["hindi", "hin"]):
+        l_tags.append("hindi")
+    if any(x in clean_movie_name for x in ["english", "eng"]):
+        l_tags.append("english")
+    if any(x in clean_movie_name for x in ["dual", "hin-tel", "hin-tam", "multi"]):
+        l_tags.append("dual audio")
+    
+    # 🎬 Smart Season Match (S01, S1, Season 1 etc.)
+    season_matches = re.findall(r'\b(?:s|season)\s*0*(\d+)\b', clean_movie_name)
+    for s_num in season_matches:
+        s_tags.append(f"S{s_num.zfill(2)}")
+        
     for match in re.findall(r'\be(\d+)\b|\bepisode\s*(\d+)\b', clean_movie_name):
         e_tags.append(f"E{str(match[0] or match[1]).zfill(2)}")
 
@@ -191,9 +203,8 @@ async def search_movie(client, message):
     await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=InlineKeyboardMarkup(btns))
     raise StopPropagation
 
-# ⏱️ 10-MIN AUTO DELETE FUNCTION
 async def auto_del(client, chat_id, ids):
-    await asyncio.sleep(600) # Wait for 10 minutes (600 seconds)
+    await asyncio.sleep(600)
     try: await client.delete_messages(chat_id, ids)
     except: pass
 
@@ -244,32 +255,57 @@ async def callbacks(client, query):
             asyncio.create_task(auto_del(client, query.message.chat.id, sent))
         await query.answer()
 
-    # 🛠️ FILTERS
+    # 🛠️ FILTERS LOGIC
     elif data.startswith("flt_"):
         ftype = data.split("_")[1]
         sq = data.split("_", 2)[2]
         btns = []
-        if ftype == "q": btns = [[InlineKeyboardButton(q, callback_data=f"app_quality_{q}_{sq}")] for q in ["480p", "720p", "1080p", "4k"]]
-        elif ftype == "l": btns = [[InlineKeyboardButton(l.title(), callback_data=f"app_language_{l}_{sq}")] for l in ["hindi", "english", "dual audio"]]
+        
+        if ftype == "q": 
+            btns = [[InlineKeyboardButton(q, callback_data=f"app_quality_{q}_{sq}")] for q in ["480p", "720p", "1080p", "4k"]]
+        elif ftype == "l": 
+            btns = [[InlineKeyboardButton(l.title(), callback_data=f"app_language_{l}_{sq}")] for l in ["hindi", "english", "dual audio"]]
+        elif ftype == "s":
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(50))
+            seasons = sorted(list({s for m in movies for s in m.get("season", [])}))
+            if not seasons: return await query.answer("❌ Season nahi mila!", show_alert=True)
+            
+            row = []
+            for s in seasons:
+                s_label = f"Season {int(s.replace('S', ''))}"
+                row.append(InlineKeyboardButton(s_label, callback_data=f"app_season_{s}_{sq}"))
+                if len(row) == 2:
+                    btns.append(row)
+                    row = []
+            if row: btns.append(row)
         else:
-            db_field = "season" if ftype == "s" else "episode"
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(30))
-            items = sorted(list({i for m in movies for i in m.get(db_field, [])}))
-            if not items: return await query.answer("Nahi mila!", show_alert=True)
-            btns = [[InlineKeyboardButton(i, callback_data=f"app_{db_field}_{i}_{sq}")] for i in items]
-        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
-        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(50))
+            items = sorted(list({i for m in movies for i in m.get("episode", [])}))
+            if not items: return await query.answer("❌ Episode nahi mila!", show_alert=True)
+            btns = [[InlineKeyboardButton(i, callback_data=f"app_episode_{i}_{sq}")] for i in items]
 
+        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
+        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        except MessageNotModified: pass
+
+    # 🎯 APPLY FILTER & DISPLAY FILES
     elif data.startswith("app_"):
         parts = data.split("_", 3)
         field, val, sq = parts[1], parts[2], parts[3]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}, field: val}).limit(30))
+        
+        if field == "language":
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}, field: {"$regex": f"^{val}$", "$options": "i"}}).limit(30))
+        else:
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}, field: val}).limit(30))
+            
         if not movies: return await query.answer("❌ File nahi mili!", show_alert=True)
+        
         btns = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]]
         for m in movies:
             mid = str(m["_id"])
             btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
-        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        except MessageNotModified: pass
 
     elif data.startswith("back_"):
         sq = data.split("_", 1)[1]
@@ -289,7 +325,8 @@ async def callbacks(client, query):
             mid = str(m["_id"])
             btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
             btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
-        await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+        except MessageNotModified: pass
 
 # ==========================================
 # 🚀 SERVER
@@ -301,3 +338,4 @@ def run_port_server():
 if __name__ == "__main__":
     threading.Thread(target=run_port_server, daemon=True).start()
     app.run()
+    
