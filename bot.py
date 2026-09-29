@@ -34,6 +34,9 @@ movies_col = db["Movies"]
 users_col = db["Users"] 
 watchlist_col = db["Watchlist"] 
 
+# Fast memory cache for pagination
+SEARCH_CACHE = {}
+
 app = Client("ProMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 # ==========================================
@@ -167,28 +170,27 @@ async def save_movie_to_db(client, message):
 # ==========================================
 # 📑 HELPER: BUILD PAGINATED BUTTONS
 # ==========================================
-def build_search_markup(movies, query_str, page=0):
+def build_search_markup(movies, query_key, page=0):
     total_files = len(movies)
     total_pages = math.ceil(total_files / PAGE_SIZE) if total_files > 0 else 1
     page = max(0, min(page, total_pages - 1))
     
-    cb_sq = query_str[:12]
     btns = []
     
     has_season = any(m.get("season") for m in movies)
     has_episode = any(m.get("episode") for m in movies)
     
     btns.append([
-        InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{cb_sq}"),
-        InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{cb_sq}")
+        InlineKeyboardButton("✨ PIXEL", callback_data=f"flt_q_{query_key}"),
+        InlineKeyboardButton("🗣 LANGUAGE", callback_data=f"flt_l_{query_key}")
     ])
     if has_season or has_episode:
         row = []
-        if has_season: row.append(InlineKeyboardButton("🎬 SEASON", callback_data=f"flt_s_{cb_sq}"))
-        if has_episode: row.append(InlineKeyboardButton("📺 EPISODE", callback_data=f"flt_e_{cb_sq}"))
+        if has_season: row.append(InlineKeyboardButton("🎬 SEASON", callback_data=f"flt_s_{query_key}"))
+        if has_episode: row.append(InlineKeyboardButton("📺 EPISODE", callback_data=f"flt_e_{query_key}"))
         btns.append(row)
 
-    btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{cb_sq}")])
+    btns.append([InlineKeyboardButton("📥 SEND ALL", callback_data=f"sendall_{query_key}")])
 
     start_idx = page * PAGE_SIZE
     page_movies = movies[start_idx : start_idx + PAGE_SIZE]
@@ -197,35 +199,51 @@ def build_search_markup(movies, query_str, page=0):
         btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
         btns.append([InlineKeyboardButton("📌 Add Watchlist", callback_data=f"wladd_{mid}")])
 
+    # Slide / Pagination Row (⋞ BACK | 1 / X | NEXT ⋟)
     if total_pages > 1:
         nav_row = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton("⋞ BACK", callback_data=f"page_{page - 1}_{cb_sq}"))
-        nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+            nav_row.append(InlineKeyboardButton("⋞ BACK", callback_data=f"page_{page - 1}_{query_key}"))
+        nav_row.append(InlineKeyboardButton(f"PAGE {page + 1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("NEXT ⋟", callback_data=f"page_{page + 1}_{cb_sq}"))
+            nav_row.append(InlineKeyboardButton("NEXT ⋟", callback_data=f"page_{page + 1}_{query_key}"))
         btns.append(nav_row)
 
     return InlineKeyboardMarkup(btns)
 
 # ==========================================
-# 🔍 USER SEARCH (WITH PAGINATION)
+# 🔍 USER SEARCH (WITH SMART KEYWORD & PAGINATION)
 # ==========================================
 @app.on_message(filters.text & filters.private & ~filters.bot & ~filters.command(["start", "stats", "broadcast", "watchlist", "request", "setmenu"]))
 async def search_movie(client, message):
     if not await ensure_fsub(client, message): raise StopPropagation
     
-    sq = re.escape(message.text.lower().strip())
-    movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(100))
+    raw_query = message.text.lower().strip()
+    words = [re.escape(w) for w in raw_query.split() if len(w) > 1]
+    
+    if not words:
+        words = [re.escape(raw_query)]
+        
+    # Har word ka regex taaki saari related files match ho jayein
+    regex_pattern = ".*".join(words[:4]) 
+    movies = list(movies_col.find({"movie_name": {"$regex": regex_pattern, "$options": "i"}}).limit(100))
     
     if not movies:
+        # Fallback to direct search
+        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(raw_query), "$options": "i"}}).limit(100))
+
+    if not movies:
         all_names = movies_col.distinct("movie_name")
-        close = difflib.get_close_matches(message.text.lower(), all_names, n=2, cutoff=0.5)
+        close = difflib.get_close_matches(raw_query, all_names, n=2, cutoff=0.5)
         sugg = "\n".join([f"👉 `{m.title()}`" for m in close]) if close else "No similar movies."
         return await message.reply_text(f"❌ **Nahi mila.**\n{sugg}\nRequest: `/request {message.text[:20]}`")
 
-    markup = build_search_markup(movies, message.text.lower().strip(), page=0)
-    await message.reply_text(f"📁 **Files for:** `{message.text}`", reply_markup=markup)
+    # Cache store for instant pagination without MongoDB overhead
+    query_key = f"{message.from_user.id}_{message.id}"
+    SEARCH_CACHE[query_key] = {"movies": movies, "query": raw_query}
+
+    markup = build_search_markup(movies, query_key, page=0)
+    await message.reply_text(f"📁 **Files for:** `{message.text}` (Total: {len(movies)})", reply_markup=markup)
     raise StopPropagation
 
 async def auto_del(client, chat_id, ids):
@@ -240,13 +258,21 @@ async def callbacks(client, query):
     if data == "noop":
         return await query.answer()
 
+    # 📑 SLIDE / PAGINATION HANDLER (INSTANT CLICK)
     elif data.startswith("page_"):
         parts = data.split("_", 2)
         target_page = int(parts[1])
-        sq = parts[2]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(100))
+        query_key = parts[2]
+        
+        cached = SEARCH_CACHE.get(query_key)
+        if cached:
+            movies = cached["movies"]
+        else:
+            # Fallback search
+            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(query_key.split('_')[0]), "$options": "i"}}).limit(100))
+            
         if not movies: return await query.answer("No files found!")
-        markup = build_search_markup(movies, sq, page=target_page)
+        markup = build_search_markup(movies, query_key, page=target_page)
         try: await query.message.edit_reply_markup(markup)
         except MessageNotModified: pass
         await query.answer()
@@ -268,7 +294,7 @@ async def callbacks(client, query):
         watchlist_col.update_one({"user_id": query.from_user.id}, {"$addToSet": {"movies": data.split("_")[1]}}, upsert=True)
         await query.answer("📌 Saved to Watchlist!")
 
-    # 📥 GET SINGLE FILE (WITH BRANDED CAPTION & 10-MIN AUTO DELETE)
+    # 📥 GET SINGLE FILE
     elif data.startswith("get_"):
         movie = movies_col.find_one({"_id": ObjectId(data.split("_")[1])})
         if movie and "message_id" in movie:
@@ -283,10 +309,15 @@ async def callbacks(client, query):
             asyncio.create_task(auto_del(client, query.message.chat.id, [msg.id, w_msg.id]))
         await query.answer()
 
-    # 📥 GET ALL FILES (WITH BRANDED CAPTION & 10-MIN AUTO DELETE)
+    # 📥 GET ALL FILES
     elif data.startswith("sendall_"):
-        sq = re.escape(data.split("_", 1)[1])
-        movies = list(movies_col.find({"movie_name": {"$regex": sq, "$options": "i"}}).limit(30))
+        query_key = data.split("_", 1)[1]
+        cached = SEARCH_CACHE.get(query_key)
+        if cached:
+            movies = cached["movies"]
+        else:
+            movies = list(movies_col.find({}).limit(10))
+            
         sent = []
         for m in movies:
             if "message_id" in m:
@@ -308,67 +339,78 @@ async def callbacks(client, query):
     # 🛠️ FILTERS LOGIC
     elif data.startswith("flt_"):
         ftype = data.split("_")[1]
-        sq = data.split("_", 2)[2]
+        query_key = data.split("_", 2)[2]
+        cached = SEARCH_CACHE.get(query_key)
+        movies = cached["movies"] if cached else []
         btns = []
         
         if ftype == "q": 
-            btns = [[InlineKeyboardButton(q, callback_data=f"app_quality_{q}_{sq}")] for q in ["480p", "720p", "1080p", "4k"]]
+            btns = [[InlineKeyboardButton(q, callback_data=f"app_quality_{q}_{query_key}")] for q in ["480p", "720p", "1080p", "4k"]]
         elif ftype == "l": 
-            btns = [[InlineKeyboardButton(l.title(), callback_data=f"app_language_{l}_{sq}")] for l in ["hindi", "english", "dual audio"]]
+            btns = [[InlineKeyboardButton(l.title(), callback_data=f"app_language_{l}_{query_key}")] for l in ["hindi", "english", "dual audio"]]
         elif ftype == "s":
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(50))
             seasons = sorted(list({s for m in movies for s in m.get("season", [])}))
             if not seasons: return await query.answer("❌ Season nahi mila!", show_alert=True)
             
             row = []
             for s in seasons:
                 s_label = f"Season {int(s.replace('S', ''))}"
-                row.append(InlineKeyboardButton(s_label, callback_data=f"app_season_{s}_{sq}"))
+                row.append(InlineKeyboardButton(s_label, callback_data=f"app_season_{s}_{query_key}"))
                 if len(row) == 2:
                     btns.append(row)
                     row = []
             if row: btns.append(row)
         else:
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(50))
             items = sorted(list({i for m in movies for i in m.get("episode", [])}))
             if not items: return await query.answer("❌ Episode nahi mila!", show_alert=True)
-            btns = [[InlineKeyboardButton(i, callback_data=f"app_episode_{i}_{sq}")] for i in items]
+            btns = [[InlineKeyboardButton(i, callback_data=f"app_episode_{i}_{query_key}")] for i in items]
 
-        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")])
+        btns.append([InlineKeyboardButton("🔙 Back", callback_data=f"back_{query_key}")])
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         except MessageNotModified: pass
 
-    # 🎯 APPLY FILTER & DISPLAY FILES (FIXED)
+    # 🎯 APPLY FILTER & DISPLAY FILES
     elif data.startswith("app_"):
         parts = data.split("_", 3)
-        field, val, sq = parts[1], parts[2], parts[3]
+        field, val, query_key = parts[1], parts[2], parts[3]
+        cached = SEARCH_CACHE.get(query_key)
+        all_movies = cached["movies"] if cached else []
         
         if field == "language":
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}, field: {"$regex": f"^{val}$", "$options": "i"}}).limit(30))
+            filtered = [m for m in all_movies if val in m.get("language", [])]
+        elif field == "quality":
+            filtered = [m for m in all_movies if val in m.get("quality", [])]
+        elif field == "season":
+            filtered = [m for m in all_movies if val in m.get("season", [])]
         else:
-            movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}, field: val}).limit(30))
+            filtered = [m for m in all_movies if val in m.get("episode", [])]
             
-        if not movies: return await query.answer("❌ File nahi mili!", show_alert=True)
+        if not filtered: return await query.answer("❌ File nahi mili!", show_alert=True)
         
-        btns = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{sq}")]]
-        for m in movies:
+        btns = [[InlineKeyboardButton("🔙 Back", callback_data=f"back_{query_key}")]]
+        for m in filtered:
             mid = str(m["_id"])
             btns.append([InlineKeyboardButton(f"📁 {m.get('file_name', 'File')}", callback_data=f"get_{mid}")])
         try: await query.message.edit_reply_markup(InlineKeyboardMarkup(btns))
         except MessageNotModified: pass
 
     elif data.startswith("back_"):
-        sq = data.split("_", 1)[1]
-        movies = list(movies_col.find({"movie_name": {"$regex": re.escape(sq), "$options": "i"}}).limit(100))
-        markup = build_search_markup(movies, sq, page=0)
+        query_key = data.split("_", 1)[1]
+        cached = SEARCH_CACHE.get(query_key)
+        movies = cached["movies"] if cached else []
+        markup = build_search_markup(movies, query_key, page=0)
         try: await query.message.edit_reply_markup(markup)
         except MessageNotModified: pass
 
 # ==========================================
 # 🚀 SERVER
 # ==========================================
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
 def run_port_server():
-    with socketserver.TCPServer(("0.0.0.0", int(os.environ.get("PORT", 10000))), http.server.SimpleHTTPRequestHandler) as httpd:
+    port = int(os.environ.get("PORT", 10000))
+    with ReusableTCPServer(("0.0.0.0", port), http.server.SimpleHTTPRequestHandler) as httpd:
         httpd.serve_forever()
 
 if __name__ == "__main__":
